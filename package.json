@@ -1,0 +1,32 @@
+{
+  "name": "srv18083",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 18083",
+    "build": "next build",
+    "start": "next start -p 18083"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.4.1",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^17.3.1",
+    "next": "^14.2.26",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.13.5",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/uuid": "^10.0.0",
+    "prisma": "^6.4.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}
