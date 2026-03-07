@@ -73,6 +73,14 @@ export async function POST(req: NextRequest) {
     },
   });
 
+  // 非同期で文字起こしを自動開始（fire-and-forget）
+  const baseUrl = req.nextUrl.origin;
+  const authHeader = req.headers.get('authorization') ?? '';
+  fetch(`${baseUrl}/api/recordings/${recording.id}/transcribe`, {
+    method: 'POST',
+    headers: { authorization: authHeader },
+  }).catch(() => {});
+
   return NextResponse.json(recording, { status: 201 });
 }
 
