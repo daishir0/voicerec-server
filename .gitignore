@@ -6,3 +6,4 @@ data/
 .env
 memo.md
 *.service
+tsconfig.tsbuildinfo

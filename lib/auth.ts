@@ -53,3 +53,39 @@ export async function clearAdminSession() {
   const cookieStore = await cookies();
   cookieStore.delete('admin_session');
 }
+
+// --- User session ---
+
+export async function setUserSession(userId: string, username: string) {
+  const data = JSON.stringify({ userId, username, ts: Date.now() });
+  const signed = sign(Buffer.from(data).toString('base64url'));
+  const cookieStore = await cookies();
+  cookieStore.set('user_session', signed, {
+    httpOnly: true,
+    secure: false,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 24,
+  });
+}
+
+export async function getUserSession(): Promise<{ userId: string; username: string } | null> {
+  const cookieStore = await cookies();
+  const cookie = cookieStore.get('user_session');
+  if (!cookie) return null;
+
+  const value = unsign(cookie.value);
+  if (!value) return null;
+
+  try {
+    const data = JSON.parse(Buffer.from(value, 'base64url').toString());
+    return { userId: data.userId, username: data.username };
+  } catch {
+    return null;
+  }
+}
+
+export async function clearUserSession() {
+  const cookieStore = await cookies();
+  cookieStore.delete('user_session');
+}

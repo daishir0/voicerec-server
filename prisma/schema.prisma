@@ -12,6 +12,7 @@ model User {
   username     String      @unique
   passwordHash String
   recordings   Recording[]
+  feedbacks    Feedback[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -35,6 +36,11 @@ model Recording {
   language               String?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
+  meeting                Meeting?
+  correctionResults      CorrectionResult[]
+  groundTruths           GroundTruth[]
+  evaluationResults      EvaluationResult[]
+  feedbacks              Feedback[]
 }
 
 model AdminUser {
@@ -44,4 +50,147 @@ model AdminUser {
   role         String   @default("admin")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model Domain {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String
+  entities          OntologyEntity[]
+  meetings          Meeting[]
+  snapshots         OntologySnapshot[]
+  correctionResults CorrectionResult[]
+  groundTruths      GroundTruth[]
+  evaluationResults EvaluationResult[]
+  feedbacks         Feedback[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Meeting {
+  id           String    @id @default(uuid())
+  domainId     String
+  domain       Domain    @relation(fields: [domainId], references: [id])
+  recordingId  String?   @unique
+  recording    Recording? @relation(fields: [recordingId], references: [id])
+  weekNumber   Int
+  meetingDate  DateTime
+  participants Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model OntologyEntity {
+  id            String   @id @default(uuid())
+  domainId      String
+  domain        Domain   @relation(fields: [domainId], references: [id])
+  prefLabel     String
+  altLabels     String   @default("[]")
+  phoneticHints String   @default("[]")
+  definition    String?
+  category      String?
+  isActive      Boolean  @default(true)
+  source        String   @default("manual")
+  relationsFrom OntologyRelation[] @relation("fromEntity")
+  relationsTo   OntologyRelation[] @relation("toEntity")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([domainId, prefLabel])
+}
+
+model OntologyRelation {
+  id                 String         @id @default(uuid())
+  fromEntityId       String
+  fromEntity         OntologyEntity @relation("fromEntity", fields: [fromEntityId], references: [id], onDelete: Cascade)
+  toEntityId         String
+  toEntity           OntologyEntity @relation("toEntity", fields: [toEntityId], references: [id], onDelete: Cascade)
+  relationType       String
+  cooccurrenceWeight Float          @default(0)
+  source             String         @default("manual")
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@unique([fromEntityId, toEntityId, relationType])
+}
+
+model OntologySnapshot {
+  id            String   @id @default(uuid())
+  domainId      String
+  domain        Domain   @relation(fields: [domainId], references: [id])
+  weekNumber    Int
+  label         String?
+  data          String
+  entityCount   Int
+  relationCount Int
+  createdAt     DateTime @default(now())
+
+  @@unique([domainId, weekNumber])
+}
+
+model CorrectionResult {
+  id            String    @id @default(uuid())
+  recordingId   String
+  recording     Recording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  domainId      String
+  domain        Domain    @relation(fields: [domainId], references: [id])
+  condition     String    // "B1", "B2", "B3", "proposed", "A1", "A2", "A3", "A4", "A5"
+  layer1Result  String?   // JSON: Layer1Result[]
+  layer2Result  String?   // JSON: Layer2のフル結果（Phase 2Cで使用）
+  correctedText String?   // 最終訂正テキスト
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([recordingId, domainId, condition])
+}
+
+model GroundTruth {
+  id          String    @id @default(uuid())
+  recordingId String
+  recording   Recording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  domainId    String
+  domain      Domain    @relation(fields: [domainId], references: [id])
+  segments    String    // JSON: GT付きセグメント配列
+  annotatorId String    // "annotator1", "annotator2"
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([recordingId, domainId, annotatorId])
+}
+
+model Feedback {
+  id               String    @id @default(uuid())
+  recordingId      String
+  recording        Recording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  domainId         String
+  domain           Domain    @relation(fields: [domainId], references: [id])
+  userId           String
+  user             User      @relation(fields: [userId], references: [id])
+  segmentIndex     Int
+  feedbackType     String    // "approve", "reject", "suggest_term", "suggest_correction"
+  originalText     String
+  correctedText    String?   // 訂正テキスト（reject/suggest_correctionの場合）
+  suggestedTerm    String?   // 新用語提案
+  suggestedReading String?   // 読み仮名提案
+  comment          String?   // 自由コメント
+  createdAt        DateTime  @default(now())
+}
+
+model EvaluationResult {
+  id          String    @id @default(uuid())
+  recordingId String
+  recording   Recording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  domainId    String
+  domain      Domain    @relation(fields: [domainId], references: [id])
+  condition   String
+  annotatorId String
+  cerDE       Float
+  cerGEN      Float
+  cerTotal    Float
+  dkdpRatio   Float
+  entityCount Int
+  details     String    // JSON: 詳細結果
+  createdAt   DateTime  @default(now())
+
+  @@unique([recordingId, domainId, condition, annotatorId])
 }
