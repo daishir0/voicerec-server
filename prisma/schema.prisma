@@ -34,6 +34,8 @@ model Recording {
   transcriptionError     String?
   transcriptionAt        DateTime?
   language               String?
+  deletedByUser          Boolean   @default(false)
+  deletedByUserAt        DateTime?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
   meeting                Meeting?

@@ -4,6 +4,25 @@ import { getUserSession } from '@/lib/auth';
 import fs from 'fs/promises';
 import path from 'path';
 
+// DELETE: 論理削除（deletedByUserフラグ）
+export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getUserSession();
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { id } = params;
+  const recording = await prisma.recording.findUnique({ where: { id } });
+  if (!recording || recording.userId !== session.userId) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  await prisma.recording.update({
+    where: { id },
+    data: { deletedByUser: true, deletedByUserAt: new Date() },
+  });
+
+  return NextResponse.json({ ok: true });
+}
+
 // GET: ファイル配信（再生用） - 自分の録音のみ
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getUserSession();

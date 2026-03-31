@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, DragEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, DragEvent, useMemo } from 'react';
 
 interface Recording {
   id: string;
@@ -19,19 +19,30 @@ const ACCEPTED_EXTS = ['.mp3', '.mp4', '.m4a', '.wav', '.webm', '.ogg', '.flac',
 
 export default function UserRecordingsPage() {
   const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [loading, setLoading] = useState(true);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Search
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Delete state
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [swipedId, setSwipedId] = useState<string | null>(null);
+
   // Upload state
+  const [showUpload, setShowUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const fetchRecordings = useCallback(async () => {
+    setLoading(true);
     const res = await fetch('/user/api/recordings');
     if (res.ok) setRecordings(await res.json());
+    setLoading(false);
   }, []);
 
   useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
@@ -44,6 +55,17 @@ export default function UserRecordingsPage() {
       }
     };
   }, []);
+
+  // Filtered recordings
+  const filteredRecordings = useMemo(() => {
+    if (!searchQuery.trim()) return recordings;
+    const q = searchQuery.toLowerCase();
+    return recordings.filter(r =>
+      r.displayName.toLowerCase().includes(q) ||
+      r.filename.toLowerCase().includes(q) ||
+      (r.transcriptionText && r.transcriptionText.toLowerCase().includes(q))
+    );
+  }, [recordings, searchQuery]);
 
   const isValidAudioFile = (file: File) => {
     const ext = '.' + file.name.split('.').pop()?.toLowerCase();
@@ -79,6 +101,7 @@ export default function UserRecordingsPage() {
 
     setUploading(false);
     setUploadProgress('');
+    setShowUpload(false);
     fetchRecordings();
   };
 
@@ -122,6 +145,17 @@ export default function UserRecordingsPage() {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    if (playingId === id && audioRef.current) {
+      audioRef.current.pause(); audioRef.current = null; setPlayingId(null);
+    }
+    await fetch(`/user/api/recordings/${id}`, { method: 'DELETE' });
+    setSwipedId(null);
+    setDeletingId(null);
+    fetchRecordings();
+  };
+
   const statusBadge = (status: string) => {
     const colors: Record<string, string> = {
       completed: '#28a745',
@@ -143,52 +177,82 @@ export default function UserRecordingsPage() {
 
   return (
     <>
-      <h1>My Recordings</h1>
-
-      {/* Upload Area */}
-      <div
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onClick={() => !uploading && fileInputRef.current?.click()}
-        style={{
-          border: `2px dashed ${dragOver ? '#007bff' : '#ccc'}`,
-          borderRadius: '12px',
-          padding: '2rem',
-          textAlign: 'center',
-          cursor: uploading ? 'wait' : 'pointer',
-          background: dragOver ? '#f0f7ff' : '#fafafa',
-          marginBottom: '1.5rem',
-          transition: 'all 0.2s ease',
-        }}
-      >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={ACCEPTED_EXTS.join(',')}
-          multiple
-          style={{ display: 'none' }}
-          onChange={(e) => e.target.files && uploadFiles(e.target.files)}
-        />
-        {uploading ? (
-          <div>
-            <div style={{ fontSize: '1.1em', color: '#007bff', marginBottom: '0.5rem' }}>Uploading...</div>
-            <div style={{ color: '#666' }}>{uploadProgress}</div>
-          </div>
-        ) : (
-          <>
-            <div style={{ fontSize: '2em', marginBottom: '0.5rem', color: '#999' }}>+</div>
-            <div style={{ color: '#666', marginBottom: '0.5rem' }}>
-              Drop audio files here or click to select
-            </div>
-            <div style={{ fontSize: '0.8em', color: '#999' }}>
-              Supported: {ACCEPTED_EXTS.join(', ')}
-            </div>
-          </>
-        )}
+      {/* Toolbar: search + upload toggle */}
+      <div className="recordings-toolbar">
+        <div className="recordings-search">
+          <input
+            type="text"
+            placeholder="Search recordings..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="search-input"
+          />
+          {searchQuery && (
+            <button className="search-clear" onClick={() => setSearchQuery('')}>&times;</button>
+          )}
+        </div>
+        <button
+          className="btn btn-primary btn-upload-toggle"
+          onClick={() => setShowUpload(!showUpload)}
+        >
+          {showUpload ? 'Close' : 'Upload'}
+        </button>
       </div>
 
-      <table>
+      {/* Search results count */}
+      {searchQuery && !loading && (
+        <div style={{ fontSize: '0.85em', color: '#888', marginBottom: '12px' }}>
+          {filteredRecordings.length} / {recordings.length} recordings
+        </div>
+      )}
+
+      {/* Upload Area - desktop: always visible, mobile: toggle */}
+      <div className={`upload-area-wrapper ${showUpload ? 'show' : ''}`}>
+        <div
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onClick={() => !uploading && fileInputRef.current?.click()}
+          style={{
+            border: `2px dashed ${dragOver ? '#007bff' : '#ccc'}`,
+            borderRadius: '12px',
+            padding: '2rem',
+            textAlign: 'center',
+            cursor: uploading ? 'wait' : 'pointer',
+            background: dragOver ? '#f0f7ff' : '#fafafa',
+            marginBottom: '1.5rem',
+            transition: 'all 0.2s ease',
+          }}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ACCEPTED_EXTS.join(',')}
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => e.target.files && uploadFiles(e.target.files)}
+          />
+          {uploading ? (
+            <div>
+              <div style={{ fontSize: '1.1em', color: '#007bff', marginBottom: '0.5rem' }}>Uploading...</div>
+              <div style={{ color: '#666' }}>{uploadProgress}</div>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: '2em', marginBottom: '0.5rem', color: '#999' }}>+</div>
+              <div style={{ color: '#666', marginBottom: '0.5rem' }}>
+                Drop audio files here or click to select
+              </div>
+              <div style={{ fontSize: '0.8em', color: '#999' }}>
+                Supported: {ACCEPTED_EXTS.join(', ')}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Desktop: Table */}
+      <table className="desktop-table">
         <thead>
           <tr>
             <th>Play</th>
@@ -199,10 +263,11 @@ export default function UserRecordingsPage() {
             <th>Status</th>
             <th>Transcription</th>
             <th>Created</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
-          {recordings.map((r) => (
+          {filteredRecordings.map((r) => (
             <>
               <tr key={r.id}>
                 <td>
@@ -232,21 +297,110 @@ export default function UserRecordingsPage() {
                   )}
                 </td>
                 <td>{new Date(r.createdAt).toLocaleString()}</td>
+                <td>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    disabled={deletingId === r.id}
+                    onClick={() => { if (confirm('この録音を削除しますか？')) handleDelete(r.id); }}
+                  >
+                    {deletingId === r.id ? '...' : 'Delete'}
+                  </button>
+                </td>
               </tr>
               {expandedId === r.id && r.transcriptionText && (
                 <tr key={r.id + '-text'}>
-                  <td colSpan={8} style={{ background: '#f9f9f9', padding: '1rem', whiteSpace: 'pre-wrap', fontSize: '0.9em' }}>
+                  <td colSpan={9} style={{ background: '#f9f9f9', padding: '1rem', whiteSpace: 'pre-wrap', fontSize: '0.9em' }}>
                     {r.transcriptionText}
                   </td>
                 </tr>
               )}
             </>
           ))}
-          {recordings.length === 0 && (
-            <tr><td colSpan={8} style={{ textAlign: 'center', color: '#999' }}>No recordings</td></tr>
+          {loading && (
+            <tr><td colSpan={9} style={{ textAlign: 'center', color: '#999', padding: '2rem' }}>Loading...</td></tr>
+          )}
+          {!loading && filteredRecordings.length === 0 && (
+            <tr><td colSpan={9} style={{ textAlign: 'center', color: '#999' }}>
+              {searchQuery ? 'No matching recordings' : 'No recordings'}
+            </td></tr>
           )}
         </tbody>
       </table>
+
+      {/* Mobile: Card List */}
+      <div className="mobile-cards">
+        {loading && (
+          <div style={{ textAlign: 'center', color: '#999', padding: '2rem' }}>Loading...</div>
+        )}
+        {!loading && filteredRecordings.length === 0 && (
+          <div style={{ textAlign: 'center', color: '#999', padding: '2rem' }}>
+            {searchQuery ? 'No matching recordings' : 'No recordings'}
+          </div>
+        )}
+        {filteredRecordings.map((r) => (
+          <div key={r.id} className="recording-card-wrapper">
+            <div
+              className={`recording-card ${swipedId === r.id ? 'swiped' : ''}`}
+              onClick={() => { if (swipedId === r.id) setSwipedId(null); }}
+            >
+              <div className="recording-card-header">
+                <button
+                  className={`btn btn-sm ${playingId === r.id ? 'btn-warning' : 'btn-primary'}`}
+                  onClick={() => handlePlay(r.id)}
+                >
+                  {playingId === r.id ? '⏹' : '▶'}
+                </button>
+                <div className="recording-card-title">
+                  <div style={{ fontWeight: 600 }}>{r.displayName}</div>
+                  <div style={{ fontSize: '0.8em', color: '#999' }}>{r.filename}</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {statusBadge(r.transcriptionStatus)}
+                  <button
+                    className="card-delete-toggle"
+                    onClick={(e) => { e.stopPropagation(); setSwipedId(swipedId === r.id ? null : r.id); }}
+                    title="Delete"
+                  >
+                    ...
+                  </button>
+                </div>
+              </div>
+              <div className="recording-card-meta">
+                <span>{formatSize(r.fileSize)}</span>
+                <span>{formatDuration(r.duration)}</span>
+                <span>{new Date(r.createdAt).toLocaleDateString()}</span>
+              </div>
+              {r.transcriptionStatus === 'completed' && (
+                <>
+                  <button
+                    className="btn btn-sm btn-primary"
+                    style={{ marginTop: '8px' }}
+                    onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
+                  >
+                    {expandedId === r.id ? 'Hide Transcription' : 'Show Transcription'}
+                  </button>
+                  {expandedId === r.id && r.transcriptionText && (
+                    <div className="recording-card-transcription">
+                      {r.transcriptionText}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            {swipedId === r.id && (
+              <div className="card-delete-action">
+                <button
+                  className="card-delete-btn"
+                  disabled={deletingId === r.id}
+                  onClick={() => { if (confirm('この録音を削除しますか？')) handleDelete(r.id); }}
+                >
+                  {deletingId === r.id ? '...' : 'Delete'}
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </>
   );
 }

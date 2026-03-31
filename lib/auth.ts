@@ -6,7 +6,7 @@ if (!process.env.SESSION_SECRET) {
 }
 const SECRET = process.env.SESSION_SECRET;
 
-function sign(value: string): string {
+export function sign(value: string): string {
   const hmac = crypto.createHmac('sha256', SECRET);
   hmac.update(value);
   return value + '.' + hmac.digest('base64url');

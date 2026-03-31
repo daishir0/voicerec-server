@@ -12,7 +12,7 @@ export function middleware(request: NextRequest) {
   }
 
   // User area protection
-  if (pathname.startsWith('/user') && !pathname.startsWith('/user/login') && !pathname.startsWith('/user/api/login')) {
+  if (pathname.startsWith('/user') && !pathname.startsWith('/user/login') && !pathname.startsWith('/user/api/login') && !pathname.startsWith('/user/api/auto-login')) {
     const session = request.cookies.get('user_session');
     if (!session) {
       return NextResponse.redirect(new URL('/user/login', request.url));

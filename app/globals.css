@@ -446,30 +446,204 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* Nav user group (right side) */
+.nav-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nav-username {
+  color: #aaa;
+  font-size: 13px;
+}
+
+/* Recordings toolbar */
+.recordings-toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+  align-items: center;
+}
+
+.recordings-search {
+  flex: 1;
+  position: relative;
+}
+
+.search-input {
+  width: 100%;
+  padding: 10px 36px 10px 14px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+  background: white;
+}
+
+.search-input:focus {
+  border-color: #4a9eff;
+  box-shadow: 0 0 0 2px rgba(74,158,255,0.15);
+}
+
+.search-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: #aaa;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.search-clear:hover {
+  color: #666;
+}
+
+.btn-upload-toggle {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Upload area wrapper - visible on desktop, toggle on mobile */
+.upload-area-wrapper {
+  display: block;
+}
+
+/* Mobile cards (hidden on desktop) */
+.mobile-cards {
+  display: none;
+}
+
+.recording-card {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  padding: 14px;
+  margin-bottom: 10px;
+}
+
+.recording-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.recording-card-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.recording-card-title div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recording-card-meta {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 0.8em;
+  color: #888;
+}
+
+.recording-card-transcription {
+  margin-top: 8px;
+  padding: 10px;
+  background: #f9f9f9;
+  border-radius: 6px;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Card delete toggle (three dots) */
+.card-delete-toggle {
+  background: none;
+  border: none;
+  color: #bbb;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  letter-spacing: 1px;
+  line-height: 1;
+}
+
+.card-delete-toggle:hover {
+  background: #f0f0f0;
+  color: #888;
+}
+
+/* Card delete action area */
+.card-delete-action {
+  display: flex;
+  align-items: stretch;
+  margin-top: -10px;
+  margin-bottom: 10px;
+}
+
+.card-delete-btn {
+  width: 100%;
+  padding: 10px;
+  background: #ff4a4a;
+  color: white;
+  border: none;
+  border-radius: 0 0 8px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.card-delete-btn:hover {
+  background: #ee3a3a;
+}
+
+.card-delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 @media (max-width: 768px) {
-  /* ナビ: 折り返し・spacer非表示 */
+  /* ナビ: 横一列キープ、ロゴ+spacer+user */
   .admin-nav {
-    flex-wrap: wrap;
     height: auto;
-    padding: 12px 16px;
+    padding: 10px 16px;
     gap: 8px;
   }
-  .admin-nav .logo { width: 100%; margin-right: 0; text-align: center; }
-  .admin-nav .spacer { display: none; }
-  .admin-nav a { font-size: 13px; padding: 6px 8px; }
-  .admin-nav button { padding: 8px 16px; }
+  .admin-nav .logo { font-size: 14px; margin-right: 8px; }
+  .admin-nav .spacer { flex: 1; }
+  .admin-nav a { display: none; }
+  .admin-nav button { padding: 6px 12px; font-size: 12px; }
+  .nav-username { font-size: 12px; }
 
   /* コンテンツ */
   .admin-content { padding: 16px 12px; }
   h1 { font-size: 20px; }
 
-  /* テーブル: 横スクロール */
-  table {
+  /* アップロードエリア: 初期非表示、.show で表示 */
+  .upload-area-wrapper { display: none; }
+  .upload-area-wrapper.show { display: block; }
+
+  /* テーブル→カード切替 */
+  .desktop-table { display: none; }
+  .mobile-cards { display: block; }
+
+  /* 他テーブル（admin等）は横スクロール維持 */
+  table:not(.desktop-table) {
     display: block;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
-  th, td { padding: 8px 10px; font-size: 13px; white-space: nowrap; }
+  table:not(.desktop-table) th,
+  table:not(.desktop-table) td { padding: 8px 10px; font-size: 13px; white-space: nowrap; }
 
   /* フォーム: 縦並び + 入力幅100% */
   .form-row, .filter-row { flex-direction: column; align-items: stretch; }
@@ -482,4 +656,10 @@ button:disabled {
 
   /* ログイン */
   .login-container { margin: 40px 16px; max-width: none; padding: 24px 16px; }
+
+  /* モーダル */
+  .modal { min-width: unset; margin: 16px; width: calc(100% - 32px); }
+
+  /* 検索バー */
+  .search-input { padding: 10px 36px 10px 12px; font-size: 15px; }
 }

@@ -9,7 +9,7 @@ export async function GET() {
   }
 
   const recordings = await prisma.recording.findMany({
-    where: { userId: session.userId },
+    where: { userId: session.userId, deletedByUser: false },
     orderBy: { createdAt: 'desc' },
   });
 

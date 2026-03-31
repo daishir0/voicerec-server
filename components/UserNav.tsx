@@ -25,8 +25,10 @@ export default function UserNav() {
       <span className="logo">My Recordings</span>
       <Link href="/user/recordings" className={pathname === '/user/recordings' ? 'active' : ''}>Recordings</Link>
       <span className="spacer" />
-      {username && <span style={{ color: '#aaa', marginRight: '1rem' }}>{username}</span>}
-      <button onClick={handleLogout}>Logout</button>
+      <div className="nav-user">
+        {username && <span className="nav-username">{username}</span>}
+        <button onClick={handleLogout}>Logout</button>
+      </div>
     </nav>
   );
 }

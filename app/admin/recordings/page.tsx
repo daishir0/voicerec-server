@@ -11,6 +11,8 @@ interface Recording {
   duration: number;
   mimeType: string;
   transcriptionStatus: string;
+  deletedByUser: boolean;
+  deletedByUserAt: string | null;
   createdAt: string;
   user: { username: string };
 }
@@ -263,6 +265,7 @@ export default function RecordingsPage() {
             <th>Size</th>
             <th>Duration</th>
             <th>Status</th>
+            <th>Visibility</th>
             <th>Created</th>
             <th>Actions</th>
           </tr>
@@ -285,6 +288,29 @@ export default function RecordingsPage() {
               <td>{formatSize(r.fileSize)}</td>
               <td>{formatDuration(r.duration)}</td>
               <td>{statusBadge(r.transcriptionStatus)}</td>
+              <td>
+                {r.deletedByUser ? (
+                  <span style={{
+                    display: 'inline-block',
+                    padding: '2px 8px',
+                    borderRadius: '12px',
+                    fontSize: '0.75em',
+                    color: '#fff',
+                    background: '#dc3545',
+                  }} title={r.deletedByUserAt ? `Deleted: ${new Date(r.deletedByUserAt).toLocaleString()}` : ''}>
+                    user deleted
+                  </span>
+                ) : (
+                  <span style={{
+                    display: 'inline-block',
+                    padding: '2px 8px',
+                    borderRadius: '12px',
+                    fontSize: '0.75em',
+                    color: '#fff',
+                    background: '#28a745',
+                  }}>visible</span>
+                )}
+              </td>
               <td>{new Date(r.createdAt).toLocaleString()}</td>
               <td>
                 <button className="btn btn-danger btn-sm" onClick={() => handleDelete(r.id)}>Delete</button>
@@ -292,7 +318,7 @@ export default function RecordingsPage() {
             </tr>
           ))}
           {recordings.length === 0 && (
-            <tr><td colSpan={9} style={{ textAlign: 'center', color: '#999' }}>No recordings</td></tr>
+            <tr><td colSpan={10} style={{ textAlign: 'center', color: '#999' }}>No recordings</td></tr>
           )}
         </tbody>
       </table>
