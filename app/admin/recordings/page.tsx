@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, DragEvent } from 'react';
+import AudioPlayer from '@/components/AudioPlayer';
 
 interface Recording {
   id: string;
@@ -11,6 +12,7 @@ interface Recording {
   duration: number;
   mimeType: string;
   transcriptionStatus: string;
+  transcriptionText: string | null;
   deletedByUser: boolean;
   deletedByUserAt: string | null;
   createdAt: string;
@@ -29,8 +31,8 @@ export default function RecordingsPage() {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [filterUserId, setFilterUserId] = useState('');
-  const [playingId, setPlayingId] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [expandedPlayId, setExpandedPlayId] = useState<string | null>(null);
+  const [expandedTextId, setExpandedTextId] = useState<string | null>(null);
 
   // Upload state
   const [uploadUserId, setUploadUserId] = useState('');
@@ -58,15 +60,6 @@ export default function RecordingsPage() {
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
   useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
-
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-    };
-  }, []);
 
   const isValidAudioFile = (file: File) => {
     if (ACCEPTED_TYPES.some(t => file.type.startsWith(t.split('/')[0]) || file.type === t)) return true;
@@ -120,36 +113,12 @@ export default function RecordingsPage() {
     }
   };
 
-  const handleDragOver = (e: DragEvent) => {
-    e.preventDefault();
-    setDragOver(true);
-  };
-
-  const handleDragLeave = (e: DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-  };
-
-  const handlePlay = (id: string) => {
-    if (playingId === id) {
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-      setPlayingId(null);
-      return;
-    }
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-    const audio = new Audio(`/admin/api/recordings/${id}`);
-    audio.onended = () => { setPlayingId(null); audioRef.current = null; };
-    audio.onerror = () => { setPlayingId(null); audioRef.current = null; alert('Playback error'); };
-    audio.play();
-    audioRef.current = audio;
-    setPlayingId(id);
-  };
+  const handleDragOver = (e: DragEvent) => { e.preventDefault(); setDragOver(true); };
+  const handleDragLeave = (e: DragEvent) => { e.preventDefault(); setDragOver(false); };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this recording?')) return;
-    if (playingId === id && audioRef.current) {
-      audioRef.current.pause(); audioRef.current = null; setPlayingId(null);
-    }
+    if (expandedPlayId === id) setExpandedPlayId(null);
     await fetch(`/admin/api/recordings/${id}`, { method: 'DELETE' });
     fetchRecordings();
   };
@@ -260,11 +229,11 @@ export default function RecordingsPage() {
           <tr>
             <th>Play</th>
             <th>Name</th>
-            <th>Filename</th>
             <th>User</th>
             <th>Size</th>
             <th>Duration</th>
             <th>Status</th>
+            <th>Transcription</th>
             <th>Visibility</th>
             <th>Created</th>
             <th>Actions</th>
@@ -272,50 +241,80 @@ export default function RecordingsPage() {
         </thead>
         <tbody>
           {recordings.map((r) => (
-            <tr key={r.id}>
-              <td>
-                <button
-                  className={`btn btn-sm ${playingId === r.id ? 'btn-warning' : 'btn-primary'}`}
-                  onClick={() => handlePlay(r.id)}
-                  title={playingId === r.id ? 'Stop' : 'Play'}
-                >
-                  {playingId === r.id ? '⏹' : '▶'}
-                </button>
-              </td>
-              <td>{r.displayName}</td>
-              <td style={{ fontSize: '0.85em', color: '#666' }}>{r.filename}</td>
-              <td>{r.user.username}</td>
-              <td>{formatSize(r.fileSize)}</td>
-              <td>{formatDuration(r.duration)}</td>
-              <td>{statusBadge(r.transcriptionStatus)}</td>
-              <td>
-                {r.deletedByUser ? (
-                  <span style={{
-                    display: 'inline-block',
-                    padding: '2px 8px',
-                    borderRadius: '12px',
-                    fontSize: '0.75em',
-                    color: '#fff',
-                    background: '#dc3545',
-                  }} title={r.deletedByUserAt ? `Deleted: ${new Date(r.deletedByUserAt).toLocaleString()}` : ''}>
-                    user deleted
-                  </span>
-                ) : (
-                  <span style={{
-                    display: 'inline-block',
-                    padding: '2px 8px',
-                    borderRadius: '12px',
-                    fontSize: '0.75em',
-                    color: '#fff',
-                    background: '#28a745',
-                  }}>visible</span>
-                )}
-              </td>
-              <td>{new Date(r.createdAt).toLocaleString()}</td>
-              <td>
-                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(r.id)}>Delete</button>
-              </td>
-            </tr>
+            <>
+              <tr key={r.id}>
+                <td>
+                  <button
+                    className={`btn btn-sm ${expandedPlayId === r.id ? 'btn-warning' : 'btn-primary'}`}
+                    onClick={() => setExpandedPlayId(expandedPlayId === r.id ? null : r.id)}
+                    title={expandedPlayId === r.id ? 'Close' : 'Play'}
+                  >
+                    {expandedPlayId === r.id ? '⏹' : '▶'}
+                  </button>
+                </td>
+                <td>
+                  <div>{r.displayName}</div>
+                  <div style={{ fontSize: '0.8em', color: '#999' }}>{r.filename}</div>
+                </td>
+                <td>{r.user.username}</td>
+                <td>{formatSize(r.fileSize)}</td>
+                <td>{formatDuration(r.duration)}</td>
+                <td>{statusBadge(r.transcriptionStatus)}</td>
+                <td>
+                  {r.transcriptionStatus === 'completed' && r.transcriptionText ? (
+                    <button
+                      className="btn btn-sm btn-primary"
+                      onClick={() => setExpandedTextId(expandedTextId === r.id ? null : r.id)}
+                    >
+                      {expandedTextId === r.id ? 'Hide' : 'Show'}
+                    </button>
+                  ) : (
+                    <span style={{ color: '#999', fontSize: '0.85em' }}>-</span>
+                  )}
+                </td>
+                <td>
+                  {r.deletedByUser ? (
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '2px 8px',
+                      borderRadius: '12px',
+                      fontSize: '0.75em',
+                      color: '#fff',
+                      background: '#dc3545',
+                    }} title={r.deletedByUserAt ? `Deleted: ${new Date(r.deletedByUserAt).toLocaleString()}` : ''}>
+                      user deleted
+                    </span>
+                  ) : (
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '2px 8px',
+                      borderRadius: '12px',
+                      fontSize: '0.75em',
+                      color: '#fff',
+                      background: '#28a745',
+                    }}>visible</span>
+                  )}
+                </td>
+                <td>{new Date(r.createdAt).toLocaleString()}</td>
+                <td>
+                  <button className="btn btn-danger btn-sm" onClick={() => handleDelete(r.id)}>Delete</button>
+                </td>
+              </tr>
+              {expandedPlayId === r.id && (
+                <tr key={r.id + '-player'}>
+                  <td colSpan={10} style={{ padding: '8px 16px' }}>
+                    <AudioPlayer src={`/admin/api/recordings/${r.id}`} />
+                  </td>
+                </tr>
+              )}
+              {expandedTextId === r.id && r.transcriptionText && (
+                <tr key={r.id + '-text'}>
+                  <td colSpan={10} style={{ background: '#f9f9f9', padding: '1rem', whiteSpace: 'pre-wrap', fontSize: '0.9em' }}>
+                    {r.transcriptionText}
+                  </td>
+                </tr>
+              )}
+            </>
           ))}
           {recordings.length === 0 && (
             <tr><td colSpan={10} style={{ textAlign: 'center', color: '#999' }}>No recordings</td></tr>

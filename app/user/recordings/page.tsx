@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, DragEvent, useMemo } from 'react';
+import AudioPlayer from '@/components/AudioPlayer';
 
 interface Recording {
   id: string;
@@ -20,9 +21,8 @@ const ACCEPTED_EXTS = ['.mp3', '.mp4', '.m4a', '.wav', '.webm', '.ogg', '.flac',
 export default function UserRecordingsPage() {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [loading, setLoading] = useState(true);
-  const [playingId, setPlayingId] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [expandedPlayId, setExpandedPlayId] = useState<string | null>(null);
+  const [expandedTextId, setExpandedTextId] = useState<string | null>(null);
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,15 +46,6 @@ export default function UserRecordingsPage() {
   }, []);
 
   useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
-
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-    };
-  }, []);
 
   // Filtered recordings
   const filteredRecordings = useMemo(() => {
@@ -116,21 +107,6 @@ export default function UserRecordingsPage() {
   const handleDragOver = (e: DragEvent) => { e.preventDefault(); setDragOver(true); };
   const handleDragLeave = (e: DragEvent) => { e.preventDefault(); setDragOver(false); };
 
-  const handlePlay = (id: string) => {
-    if (playingId === id) {
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-      setPlayingId(null);
-      return;
-    }
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-    const audio = new Audio(`/user/api/recordings/${id}`);
-    audio.onended = () => { setPlayingId(null); audioRef.current = null; };
-    audio.onerror = () => { setPlayingId(null); audioRef.current = null; alert('Playback error'); };
-    audio.play();
-    audioRef.current = audio;
-    setPlayingId(id);
-  };
-
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
@@ -147,9 +123,7 @@ export default function UserRecordingsPage() {
 
   const handleDelete = async (id: string) => {
     setDeletingId(id);
-    if (playingId === id && audioRef.current) {
-      audioRef.current.pause(); audioRef.current = null; setPlayingId(null);
-    }
+    if (expandedPlayId === id) setExpandedPlayId(null);
     await fetch(`/user/api/recordings/${id}`, { method: 'DELETE' });
     setSwipedId(null);
     setDeletingId(null);
@@ -257,7 +231,6 @@ export default function UserRecordingsPage() {
           <tr>
             <th>Play</th>
             <th>Name</th>
-            <th>Filename</th>
             <th>Size</th>
             <th>Duration</th>
             <th>Status</th>
@@ -272,25 +245,27 @@ export default function UserRecordingsPage() {
               <tr key={r.id}>
                 <td>
                   <button
-                    className={`btn btn-sm ${playingId === r.id ? 'btn-warning' : 'btn-primary'}`}
-                    onClick={() => handlePlay(r.id)}
-                    title={playingId === r.id ? 'Stop' : 'Play'}
+                    className={`btn btn-sm ${expandedPlayId === r.id ? 'btn-warning' : 'btn-primary'}`}
+                    onClick={() => setExpandedPlayId(expandedPlayId === r.id ? null : r.id)}
+                    title={expandedPlayId === r.id ? 'Close' : 'Play'}
                   >
-                    {playingId === r.id ? '⏹' : '▶'}
+                    {expandedPlayId === r.id ? '⏹' : '▶'}
                   </button>
                 </td>
-                <td>{r.displayName}</td>
-                <td style={{ fontSize: '0.85em', color: '#666' }}>{r.filename}</td>
+                <td>
+                  <div>{r.displayName}</div>
+                  <div style={{ fontSize: '0.8em', color: '#999' }}>{r.filename}</div>
+                </td>
                 <td>{formatSize(r.fileSize)}</td>
                 <td>{formatDuration(r.duration)}</td>
                 <td>{statusBadge(r.transcriptionStatus)}</td>
                 <td>
-                  {r.transcriptionStatus === 'completed' ? (
+                  {r.transcriptionStatus === 'completed' && r.transcriptionText ? (
                     <button
                       className="btn btn-sm btn-primary"
-                      onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
+                      onClick={() => setExpandedTextId(expandedTextId === r.id ? null : r.id)}
                     >
-                      {expandedId === r.id ? 'Hide' : 'Show'}
+                      {expandedTextId === r.id ? 'Hide' : 'Show'}
                     </button>
                   ) : (
                     <span style={{ color: '#999', fontSize: '0.85em' }}>-</span>
@@ -307,9 +282,16 @@ export default function UserRecordingsPage() {
                   </button>
                 </td>
               </tr>
-              {expandedId === r.id && r.transcriptionText && (
+              {expandedPlayId === r.id && (
+                <tr key={r.id + '-player'}>
+                  <td colSpan={8} style={{ padding: '8px 16px' }}>
+                    <AudioPlayer src={`/user/api/recordings/${r.id}`} />
+                  </td>
+                </tr>
+              )}
+              {expandedTextId === r.id && r.transcriptionText && (
                 <tr key={r.id + '-text'}>
-                  <td colSpan={9} style={{ background: '#f9f9f9', padding: '1rem', whiteSpace: 'pre-wrap', fontSize: '0.9em' }}>
+                  <td colSpan={8} style={{ background: '#f9f9f9', padding: '1rem', whiteSpace: 'pre-wrap', fontSize: '0.9em' }}>
                     {r.transcriptionText}
                   </td>
                 </tr>
@@ -317,10 +299,10 @@ export default function UserRecordingsPage() {
             </>
           ))}
           {loading && (
-            <tr><td colSpan={9} style={{ textAlign: 'center', color: '#999', padding: '2rem' }}>Loading...</td></tr>
+            <tr><td colSpan={8} style={{ textAlign: 'center', color: '#999', padding: '2rem' }}>Loading...</td></tr>
           )}
           {!loading && filteredRecordings.length === 0 && (
-            <tr><td colSpan={9} style={{ textAlign: 'center', color: '#999' }}>
+            <tr><td colSpan={8} style={{ textAlign: 'center', color: '#999' }}>
               {searchQuery ? 'No matching recordings' : 'No recordings'}
             </td></tr>
           )}
@@ -345,10 +327,10 @@ export default function UserRecordingsPage() {
             >
               <div className="recording-card-header">
                 <button
-                  className={`btn btn-sm ${playingId === r.id ? 'btn-warning' : 'btn-primary'}`}
-                  onClick={() => handlePlay(r.id)}
+                  className={`btn btn-sm ${expandedPlayId === r.id ? 'btn-warning' : 'btn-primary'}`}
+                  onClick={() => setExpandedPlayId(expandedPlayId === r.id ? null : r.id)}
                 >
-                  {playingId === r.id ? '⏹' : '▶'}
+                  {expandedPlayId === r.id ? '⏹' : '▶'}
                 </button>
                 <div className="recording-card-title">
                   <div style={{ fontWeight: 600 }}>{r.displayName}</div>
@@ -365,21 +347,29 @@ export default function UserRecordingsPage() {
                   </button>
                 </div>
               </div>
+
+              {/* Inline Audio Player */}
+              {expandedPlayId === r.id && (
+                <div style={{ marginTop: '8px' }}>
+                  <AudioPlayer src={`/user/api/recordings/${r.id}`} />
+                </div>
+              )}
+
               <div className="recording-card-meta">
                 <span>{formatSize(r.fileSize)}</span>
                 <span>{formatDuration(r.duration)}</span>
                 <span>{new Date(r.createdAt).toLocaleDateString()}</span>
               </div>
-              {r.transcriptionStatus === 'completed' && (
+              {r.transcriptionStatus === 'completed' && r.transcriptionText && (
                 <>
                   <button
                     className="btn btn-sm btn-primary"
                     style={{ marginTop: '8px' }}
-                    onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
+                    onClick={() => setExpandedTextId(expandedTextId === r.id ? null : r.id)}
                   >
-                    {expandedId === r.id ? 'Hide Transcription' : 'Show Transcription'}
+                    {expandedTextId === r.id ? 'Hide Transcription' : 'Show Transcription'}
                   </button>
-                  {expandedId === r.id && r.transcriptionText && (
+                  {expandedTextId === r.id && (
                     <div className="recording-card-transcription">
                       {r.transcriptionText}
                     </div>
