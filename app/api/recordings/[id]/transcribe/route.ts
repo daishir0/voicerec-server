@@ -61,30 +61,27 @@ export async function POST(
 
       const response = await openai.audio.transcriptions.create({
         file: fileStream,
-        model: 'whisper-1',
-        response_format: 'verbose_json',
+        model: 'gpt-4o-transcribe',
+        response_format: 'json',
         language: 'ja',
         ...(promptText ? { prompt: promptText } : {}),
       });
 
-      if (response.language) {
-        detectedLanguage = response.language;
-      }
-
-      const segments = (response.segments ?? []).map((s) => ({
-        start: s.start + timeOffset,
-        end: s.end + timeOffset,
-        text: s.text,
-      }));
-
-      allSegments.push(...segments);
       allTexts.push(response.text);
+      // gpt-4o-transcribe does not return segments in json format
+      allSegments.push({
+        start: timeOffset,
+        end: timeOffset, // will be updated with chunk duration below
+        text: response.text,
+      });
 
-      // 次チャンクのオフセットを計算
+      // 次チャンクのオフセットを計算 + 現セグメントのend更新
       if (chunks[i] !== absolutePath) {
-        // 分割されたチャンクの場合、ffprobeで実際の長さを取得
         const chunkMeta = await getAudioMetadata(chunkPath);
+        allSegments[allSegments.length - 1].end = timeOffset + chunkMeta.duration;
         timeOffset += chunkMeta.duration;
+      } else {
+        allSegments[allSegments.length - 1].end = metadata.duration;
       }
     }
 

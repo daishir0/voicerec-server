@@ -30,24 +30,18 @@ export async function POST(
 
     const response = await openai.audio.transcriptions.create({
       file: fileStream,
-      model: 'whisper-1',
-      response_format: 'verbose_json',
+      model: 'gpt-4o-transcribe',
+      response_format: 'json',
       language: 'ja',
     });
-
-    const segments = (response.segments ?? []).map((s) => ({
-      start: s.start,
-      end: s.end,
-      text: s.text,
-    }));
 
     await prisma.recording.update({
       where: { id: params.id },
       data: {
         transcriptionStatus: 'completed',
         transcriptionText: response.text,
-        transcriptionSegments: JSON.stringify(segments),
-        language: response.language ?? 'ja',
+        transcriptionSegments: JSON.stringify([{ start: 0, end: 0, text: response.text }]),
+        language: 'ja',
         transcriptionAt: new Date(),
         transcriptionError: null,
       },

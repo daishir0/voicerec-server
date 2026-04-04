@@ -60,15 +60,17 @@ export function formatTimestamp(date: Date): string {
 }
 
 /**
- * 長時間音声を Whisper API 制限（25MB）に収まるチャンクに分割
- * 10分ごとに分割し、mp3に変換して25MB以下に収める
+ * 長時間音声を API 制限に収まるチャンクに分割
+ * 10分ごとに分割し、mp3に変換
+ * gpt-4o-transcribe: 最大1400秒、whisper-1: 最大25MB
  */
 export async function splitAudioForWhisper(filePath: string, totalDuration: number): Promise<string[]> {
   const CHUNK_DURATION = 600; // 10分 = 600秒
+  const MAX_DURATION = 1300; // gpt-4o-transcribe制限（1400秒）にマージン
 
-  // 25MB以下なら分割不要
+  // サイズ25MB以下 かつ 時間1300秒以下 なら分割不要
   const stat = await fs.stat(filePath);
-  if (stat.size <= 24 * 1024 * 1024) {
+  if (stat.size <= 24 * 1024 * 1024 && totalDuration <= MAX_DURATION) {
     return [filePath];
   }
 
