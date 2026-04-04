@@ -40,6 +40,14 @@ export async function POST(req: NextRequest) {
   const durationRaw = parseFloat((formData.get('duration') as string) || '0');
   const duration = durationRaw > 1000 ? durationRaw / 1000 : durationRaw;
 
+  // 重複チェック: 同じユーザー・同じoriginalNameが既にあれば既存を返す
+  const existing = await prisma.recording.findFirst({
+    where: { userId: user.id, originalName, deletedByUser: false },
+  });
+  if (existing) {
+    return NextResponse.json(existing, { status: 200 });
+  }
+
   const ext = path.extname(originalName) || path.extname(file.name) || '.m4a';
   let filename = buildFilename(originalName, ext);
 
@@ -60,18 +68,31 @@ export async function POST(req: NextRequest) {
   const buffer = Buffer.from(await file.arrayBuffer());
   await fs.writeFile(filePath, buffer);
 
-  const recording = await prisma.recording.create({
-    data: {
-      userId: user.id,
-      filename,
-      originalName,
-      displayName,
-      filePath: `data/${user.username}/${filename}`,
-      fileSize: buffer.length,
-      duration,
-      mimeType: file.type || 'audio/mp4',
-    },
-  });
+  let recording;
+  try {
+    recording = await prisma.recording.create({
+      data: {
+        userId: user.id,
+        filename,
+        originalName,
+        displayName,
+        filePath: `data/${user.username}/${filename}`,
+        fileSize: buffer.length,
+        duration,
+        mimeType: file.type || 'audio/mp4',
+      },
+    });
+  } catch (err: any) {
+    // Unique constraint violation (レース条件で同時アップロード時)
+    if (err.code === 'P2002') {
+      await fs.unlink(filePath).catch(() => {});
+      const dup = await prisma.recording.findFirst({
+        where: { userId: user.id, originalName },
+      });
+      if (dup) return NextResponse.json(dup, { status: 200 });
+    }
+    throw err;
+  }
 
   // 非同期で文字起こしを自動開始（fire-and-forget）
   const baseUrl = req.nextUrl.origin;
