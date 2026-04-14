@@ -10,7 +10,7 @@ Key features:
 - User portal with session-based login for viewing own recordings and transcriptions
 - Admin panel with full management capabilities (users, recordings, ontology, evaluation)
 - HMAC-signed cookie session authentication for both user and admin portals
-- SQLite database via Prisma ORM
+- PostgreSQL database via Prisma ORM
 - File storage organized by username with timestamp-based filenames
 
 ## Installation
@@ -30,7 +30,7 @@ npm install
 ```bash
 cp .env.example .env
 # Edit .env:
-#   DATABASE_URL       - SQLite database path (default: file:./dev.db)
+#   DATABASE_URL       - PostgreSQL connection string (e.g., postgresql://user:password@localhost:5432/voicerec)
 #   SESSION_SECRET     - generate with: openssl rand -hex 32
 #   SEED_USER_PASSWORD - password for test users (test1, test2, test3)
 #   SEED_ADMIN_PASSWORD - password for admin user
@@ -205,7 +205,7 @@ voicerec-serverは、モバイルデバイスからアップロードされた�
 - セッションベースのユーザーポータル（自分の録音・文字起こし閲覧）
 - 全管理機能を持つ管理パネル（ユーザー・録音・オントロジー・評価）
 - HMAC署名Cookie Session認証（ユーザー・管理者それぞれ独立）
-- Prisma ORMによるSQLiteデータベース
+- Prisma ORMによるPostgreSQLデータベース
 - ユーザー名別のファイルストレージとタイムスタンプベースのファイル名
 
 ## インストール方法
@@ -225,7 +225,7 @@ npm install
 ```bash
 cp .env.example .env
 # .envを編集:
-#   DATABASE_URL       - SQLiteデータベースパス（デフォルト: file:./dev.db）
+#   DATABASE_URL       - PostgreSQL接続文字列（例: postgresql://user:password@localhost:5432/voicerec）
 #   SESSION_SECRET     - 生成方法: openssl rand -hex 32
 #   SEED_USER_PASSWORD - テストユーザー（test1, test2, test3）のパスワード
 #   SEED_ADMIN_PASSWORD - 管理者ユーザーのパスワード

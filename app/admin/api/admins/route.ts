@@ -7,7 +7,17 @@ export async function GET() {
   const session = await getAdminSession();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const admins = await prisma.adminUser.findMany({ orderBy: { createdAt: 'desc' } });
+  const admins = await prisma.user.findMany({
+    where: { role: 'admin' },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      username: true,
+      role: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
   return NextResponse.json(admins);
 }
 
@@ -21,6 +31,15 @@ export async function POST(req: NextRequest) {
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  const admin = await prisma.adminUser.create({ data: { username, passwordHash } });
+  const admin = await prisma.user.create({
+    data: { username, passwordHash, role: 'admin' },
+    select: {
+      id: true,
+      username: true,
+      role: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
   return NextResponse.json(admin, { status: 201 });
 }

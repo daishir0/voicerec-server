@@ -8,8 +8,16 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const users = await prisma.user.findMany({
-    include: { _count: { select: { recordings: true } } },
     orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      username: true,
+      role: true,
+      transcriptionLanguage: true,
+      createdAt: true,
+      updatedAt: true,
+      _count: { select: { recordings: true } },
+    },
   });
   return NextResponse.json(users);
 }
@@ -24,6 +32,16 @@ export async function POST(req: NextRequest) {
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  const user = await prisma.user.create({ data: { username, passwordHash } });
+  const user = await prisma.user.create({
+    data: { username, passwordHash },
+    select: {
+      id: true,
+      username: true,
+      role: true,
+      transcriptionLanguage: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
   return NextResponse.json(user, { status: 201 });
 }

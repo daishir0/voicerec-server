@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateBasicAuth } from '@/lib/basic-auth';
+import { authenticateBearer } from "@/lib/bearer-auth";
 import { prisma } from '@/lib/db';
 import { executeEvolution } from '@/lib/evolution';
 
 export async function POST(req: NextRequest, { params }: { params: { domainId: string } }) {
-  const user = await authenticateBasicAuth(req);
+  const user = await authenticateBearer(req);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { domainId } = params;

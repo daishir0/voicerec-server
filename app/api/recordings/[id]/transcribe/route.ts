@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateBasicAuth } from '@/lib/basic-auth';
+import { authenticateBearer } from "@/lib/bearer-auth";
 import { prisma } from '@/lib/db';
 import fs from 'fs';
 import path from 'path';
 import OpenAI from 'openai';
 import { splitAudioForWhisper, cleanupChunks, getAudioMetadata } from '@/lib/audio-utils';
+import { runWhisperTranscription } from '@/lib/whisper-transcribe';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -18,13 +19,14 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const user = await authenticateBasicAuth(req);
+  const user = await authenticateBearer(req);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const recording = await prisma.recording.findUnique({
     where: { id: params.id },
+    include: { user: true },
   });
 
   if (!recording) {
@@ -34,6 +36,8 @@ export async function POST(
   if (recording.userId !== user.id) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
+
+  const transcriptionLanguage = recording.user.transcriptionLanguage || 'ja';
 
   await prisma.recording.update({
     where: { id: params.id },
@@ -48,7 +52,7 @@ export async function POST(
     const allSegments: Segment[] = [];
     const allTexts: string[] = [];
     let timeOffset = 0;
-    let detectedLanguage = 'ja';
+    const detectedLanguage = transcriptionLanguage;
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkPath = chunks[i];
@@ -63,7 +67,7 @@ export async function POST(
         file: fileStream,
         model: 'gpt-4o-transcribe',
         response_format: 'json',
-        language: 'ja',
+        language: transcriptionLanguage,
         ...(promptText ? { prompt: promptText } : {}),
       });
 
@@ -103,6 +107,24 @@ export async function POST(
       },
     });
 
+    // 後続: whisper-1 で発話単位セグメントを取得し Segment テーブルへ保存
+    // gpt-4o の結果を壊さないよう独立 try で囲む
+    let whisperSegmentCount = 0;
+    let whisperErrorMessage: string | null = null;
+    try {
+      const result = await runWhisperTranscription(params.id);
+      whisperSegmentCount = result.segmentCount;
+    } catch (whisperErr) {
+      whisperErrorMessage = whisperErr instanceof Error ? whisperErr.message : 'Unknown whisper error';
+      await prisma.recording.update({
+        where: { id: params.id },
+        data: {
+          whisperError: whisperErrorMessage,
+          whisperTranscribedAt: null,
+        },
+      }).catch(() => {});
+    }
+
     return NextResponse.json({
       success: true,
       chunks: chunks.length,
@@ -110,6 +132,10 @@ export async function POST(
         text: fullText,
         segments: allSegments,
         language: detectedLanguage,
+      },
+      whisper: {
+        segmentCount: whisperSegmentCount,
+        error: whisperErrorMessage,
       },
     });
   } catch (err) {

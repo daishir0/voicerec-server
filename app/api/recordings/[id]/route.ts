@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateBasicAuth } from '@/lib/basic-auth';
+import { authenticateBearer } from "@/lib/bearer-auth";
 import { prisma } from '@/lib/db';
 import fs from 'fs/promises';
 import path from 'path';
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = await authenticateBasicAuth(req);
+  const user = await authenticateBearer(req);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

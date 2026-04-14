@@ -24,6 +24,7 @@ export default function UserNav() {
     <nav className="admin-nav">
       <span className="logo">My Recordings</span>
       <Link href="/user/recordings" className={pathname === '/user/recordings' ? 'active' : ''}>Recordings</Link>
+      <Link href="/user/settings" className={pathname === '/user/settings' ? 'active' : ''}>Settings</Link>
       <span className="spacer" />
       <div className="nav-user">
         {username && <span className="nav-username">{username}</span>}

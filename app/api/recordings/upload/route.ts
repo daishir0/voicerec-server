@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateBasicAuth } from '@/lib/basic-auth';
+import { authenticateBearer } from "@/lib/bearer-auth";
 import { prisma } from '@/lib/db';
 import fs from 'fs/promises';
 import path from 'path';
@@ -9,6 +9,14 @@ function buildFilename(originalName: string, ext: string): string {
   const match = originalName.match(/(\d{8}-\d{6})/);
   const timestamp = match ? match[1] : formatNow();
   return `${timestamp}${ext}`;
+}
+
+// ファイル名 yyyymmdd-hhmmss を JST 解釈で絶対時刻 Date 化
+function parseRecordedAtFromFilename(name: string): Date | null {
+  const m = name.match(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m;
+  return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}+09:00`);
 }
 
 function formatNow(): string {
@@ -23,7 +31,7 @@ function formatNow(): string {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await authenticateBasicAuth(req);
+  const user = await authenticateBearer(req);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -68,6 +76,8 @@ export async function POST(req: NextRequest) {
   const buffer = Buffer.from(await file.arrayBuffer());
   await fs.writeFile(filePath, buffer);
 
+  const recordedAt = parseRecordedAtFromFilename(filename) ?? parseRecordedAtFromFilename(originalName) ?? new Date();
+
   let recording;
   try {
     recording = await prisma.recording.create({
@@ -80,6 +90,7 @@ export async function POST(req: NextRequest) {
         fileSize: buffer.length,
         duration,
         mimeType: file.type || 'audio/mp4',
+        recordedAt,
       },
     });
   } catch (err: any) {

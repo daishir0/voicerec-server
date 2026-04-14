@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateBasicAuth } from '@/lib/basic-auth';
+import { authenticateBearer } from "@/lib/bearer-auth";
 import { prisma } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
-  const user = await authenticateBasicAuth(req);
+  const user = await authenticateBearer(req);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const domains = await prisma.domain.findMany({
@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await authenticateBasicAuth(req);
+  const user = await authenticateBearer(req);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();

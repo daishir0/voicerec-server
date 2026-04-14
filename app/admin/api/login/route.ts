@@ -9,8 +9,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Username and password required' }, { status: 400 });
   }
 
-  const admin = await prisma.adminUser.findUnique({ where: { username } });
-  if (!admin) {
+  const admin = await prisma.user.findUnique({ where: { username } });
+  if (!admin || admin.role !== 'admin') {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
   }
 

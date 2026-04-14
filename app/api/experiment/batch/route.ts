@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateBasicAuth } from '@/lib/basic-auth';
+import { authenticateBearer } from "@/lib/bearer-auth";
 import { prisma } from '@/lib/db';
 import { runExperiment } from '@/app/api/recordings/[id]/experiment/route';
 
@@ -20,7 +20,7 @@ const VALID_CONDITIONS: ExperimentCondition[] = [
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await authenticateBasicAuth(req);
+    const user = await authenticateBearer(req);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

@@ -14,6 +14,26 @@ interface Recording {
   transcriptionStatus: string;
   transcriptionText: string | null;
   createdAt: string;
+  recordedAt: string | null;
+  whisperTranscribedAt: string | null;
+  whisperError: string | null;
+}
+
+interface WhisperSegment {
+  seq: number;
+  startOffset: number;
+  endOffset: number;
+  startAt: string;
+  endAt: string;
+  text: string;
+}
+
+function formatOffset(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 const ACCEPTED_EXTS = ['.mp3', '.mp4', '.m4a', '.wav', '.webm', '.ogg', '.flac', '.mpeg', '.mpga', '.aac'];
@@ -23,6 +43,28 @@ export default function UserRecordingsPage() {
   const [loading, setLoading] = useState(true);
   const [expandedPlayId, setExpandedPlayId] = useState<string | null>(null);
   const [expandedTextId, setExpandedTextId] = useState<string | null>(null);
+  const [expandedSegmentsId, setExpandedSegmentsId] = useState<string | null>(null);
+  const [segmentsCache, setSegmentsCache] = useState<Record<string, WhisperSegment[] | { error: string }>>({});
+
+  const loadSegments = useCallback(async (id: string) => {
+    if (segmentsCache[id]) return;
+    const res = await fetch(`/user/api/recordings/${id}/segments`);
+    if (!res.ok) {
+      setSegmentsCache((prev) => ({ ...prev, [id]: { error: `HTTP ${res.status}` } }));
+      return;
+    }
+    const data = await res.json();
+    setSegmentsCache((prev) => ({ ...prev, [id]: data.segments }));
+  }, [segmentsCache]);
+
+  const toggleSegments = useCallback((id: string) => {
+    if (expandedSegmentsId === id) {
+      setExpandedSegmentsId(null);
+    } else {
+      setExpandedSegmentsId(id);
+      loadSegments(id);
+    }
+  }, [expandedSegmentsId, loadSegments]);
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -261,12 +303,25 @@ export default function UserRecordingsPage() {
                 <td>{statusBadge(r.transcriptionStatus)}</td>
                 <td>
                   {r.transcriptionStatus === 'completed' && r.transcriptionText ? (
-                    <button
-                      className="btn btn-sm btn-primary"
-                      onClick={() => setExpandedTextId(expandedTextId === r.id ? null : r.id)}
-                    >
-                      {expandedTextId === r.id ? 'Hide' : 'Show'}
-                    </button>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={() => setExpandedTextId(expandedTextId === r.id ? null : r.id)}
+                      >
+                        {expandedTextId === r.id ? 'Hide' : 'GPT-4o'}
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        style={{
+                          background: r.whisperTranscribedAt ? '#5856d6' : '#999',
+                          color: 'white',
+                        }}
+                        onClick={() => toggleSegments(r.id)}
+                        title={r.whisperTranscribedAt ? 'Whisperセグメント表示' : 'Whisper未処理'}
+                      >
+                        {expandedSegmentsId === r.id ? 'Hide' : 'Whisper'}
+                      </button>
+                    </div>
                   ) : (
                     <span style={{ color: '#999', fontSize: '0.85em' }}>-</span>
                   )}
@@ -293,6 +348,38 @@ export default function UserRecordingsPage() {
                 <tr key={r.id + '-text'}>
                   <td colSpan={8} style={{ background: '#f9f9f9', padding: '1rem', whiteSpace: 'pre-wrap', fontSize: '0.9em' }}>
                     {r.transcriptionText}
+                  </td>
+                </tr>
+              )}
+              {expandedSegmentsId === r.id && (
+                <tr key={r.id + '-segments'}>
+                  <td colSpan={8} style={{ background: '#f0f7ff', padding: '1rem', fontSize: '0.85em' }}>
+                    {(() => {
+                      const cached = segmentsCache[r.id];
+                      if (!cached) return <div style={{ color: '#999' }}>Loading whisper segments...</div>;
+                      if ('error' in cached) return <div style={{ color: '#ff3b30' }}>Error: {cached.error}</div>;
+                      if (cached.length === 0) {
+                        return (
+                          <div style={{ color: '#999' }}>
+                            {r.whisperTranscribedAt
+                              ? 'No segments (empty audio?)'
+                              : `Whisper未処理${r.whisperError ? ` (Error: ${r.whisperError})` : ''}`}
+                          </div>
+                        );
+                      }
+                      return (
+                        <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+                          {cached.map((s) => (
+                            <div key={s.seq} style={{ marginBottom: 4, fontFamily: 'monospace' }}>
+                              <span style={{ color: '#0070f3', marginRight: 8 }}>
+                                [{formatOffset(s.startOffset)}-{formatOffset(s.endOffset)}]
+                              </span>
+                              {s.text}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </td>
                 </tr>
               )}

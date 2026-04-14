@@ -3,18 +3,39 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id           String      @id @default(uuid())
-  username     String      @unique
-  passwordHash String
-  recordings   Recording[]
-  feedbacks    Feedback[]
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  id                      String      @id @default(uuid())
+  username                String      @unique
+  passwordHash            String
+  role                    String      @default("user")
+  transcriptionLanguage   String      @default("ja")
+  mcpClientId             String?     @unique
+  mcpClientSecretHash     String?
+  mcpCredentialsCreatedAt DateTime?
+  mcpLastUsedAt           DateTime?
+  recordings              Recording[]
+  feedbacks               Feedback[]
+  segments                Segment[]
+  mobileTokens            MobileToken[]
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+}
+
+model MobileToken {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  deviceLabel String?
+  createdAt   DateTime  @default(now())
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+
+  @@index([userId])
 }
 
 model Recording {
@@ -34,6 +55,9 @@ model Recording {
   transcriptionError     String?
   transcriptionAt        DateTime?
   language               String?
+  recordedAt             DateTime?
+  whisperTranscribedAt   DateTime?
+  whisperError           String?
   deletedByUser          Boolean   @default(false)
   deletedByUserAt        DateTime?
   createdAt              DateTime  @default(now())
@@ -43,17 +67,29 @@ model Recording {
   groundTruths           GroundTruth[]
   evaluationResults      EvaluationResult[]
   feedbacks              Feedback[]
+  segments               Segment[]
 
   @@unique([userId, originalName])
+  @@index([userId, recordedAt])
 }
 
-model AdminUser {
-  id           String   @id @default(uuid())
-  username     String   @unique
-  passwordHash String
-  role         String   @default("admin")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+model Segment {
+  id           String    @id @default(uuid())
+  recordingId  String
+  recording    Recording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seq          Int
+  startOffset  Float
+  endOffset    Float
+  startAt      DateTime
+  endAt        DateTime
+  text         String
+  createdAt    DateTime  @default(now())
+
+  @@index([userId, startAt])
+  @@index([userId, endAt])
+  @@index([recordingId, seq])
 }
 
 model Domain {

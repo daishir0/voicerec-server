@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateBasicAuth } from '@/lib/basic-auth';
+import { authenticateBearer } from "@/lib/bearer-auth";
 import { prisma } from '@/lib/db';
 import { executeLayer1 } from '@/lib/layer1';
 import { executeLayer2, buildCorrectedText } from '@/lib/layer2';
@@ -19,7 +19,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const user = await authenticateBasicAuth(req);
+    const user = await authenticateBearer(req);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -173,7 +173,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const user = await authenticateBasicAuth(req);
+    const user = await authenticateBearer(req);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
