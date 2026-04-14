@@ -1,17 +1,19 @@
 # voicerec-server
 
 ## Overview
-voicerec-server is a Next.js server for receiving, storing, and managing voice recordings uploaded from mobile devices. It serves as the backend companion for [voicerec](https://github.com/daishir0/voicerec), an Expo-based mobile recording app.
+voicerec-server is a Next.js 14 backend for recording ingestion, dual transcription, and programmatic access via MCP (Model Context Protocol). It is the companion server to [voicerec](https://github.com/daishir0/voicerec), an Expo-based mobile recording app, and also exposes a Claude.ai-compatible MCP endpoint so that recorded audio can be queried in natural language from Claude.ai.
 
 Key features:
-- REST API for recording upload, listing, and deletion with Basic Auth
-- Automatic speech-to-text transcription via OpenAI Whisper API
+- Mobile upload API with **Bearer token** authentication (Basic Auth has been removed)
+- **Dual transcription pipeline**: gpt-4o-transcribe for high-quality full text + whisper-1 (verbose_json) for sentence-level segments with absolute wall-clock timestamps
+- **MCP server** for Claude.ai remote connectors with **OAuth 2.0 + PKCE** authorization code flow
+- Per-user transcription language setting (ja / en / zh / ko / es / fr / de / it / pt / ru)
 - Ontology-based domain-specific text correction (Layer 1 / Layer 2)
-- User portal with session-based login for viewing own recordings and transcriptions
-- Admin panel with full management capabilities (users, recordings, ontology, evaluation)
-- HMAC-signed cookie session authentication for both user and admin portals
+- Unified User model with `role` column (user / admin) backed by a single HMAC-signed `session` cookie
+- Admin impersonation for viewing another user's data
 - PostgreSQL database via Prisma ORM
 - File storage organized by username with timestamp-based filenames
+- E2E test suite (`npm run test:e2e`) covering upload / transcription / auth / OAuth / MCP (35 cases)
 
 ## Installation
 
@@ -29,12 +31,7 @@ npm install
 3. Set up environment variables:
 ```bash
 cp .env.example .env
-# Edit .env:
-#   DATABASE_URL       - PostgreSQL connection string (e.g., postgresql://user:password@localhost:5432/voicerec)
-#   SESSION_SECRET     - generate with: openssl rand -hex 32
-#   SEED_USER_PASSWORD - password for test users (test1, test2, test3)
-#   SEED_ADMIN_PASSWORD - password for admin user
-#   OPENAI_API_KEY     - OpenAI API key for Whisper transcription
+# Edit .env (see "Environment Variables" below)
 ```
 
 4. Initialize the database:
@@ -46,167 +43,227 @@ npx tsx prisma/seed.ts
 
 5. Start the server:
 ```bash
-npm run dev -- --port 18083
+npm run dev          # dev (port 18083)
+# or
+npm run build && npm run start   # production
 ```
+
+## Environment Variables
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `DATABASE_URL` | ✅ | PostgreSQL connection string |
+| `SESSION_SECRET` | ✅ | HMAC key for signing session cookies (`openssl rand -hex 32`) |
+| `OPENAI_API_KEY` | ✅ | Used by both gpt-4o-transcribe and whisper-1 |
+| `OAUTH_ISSUER` | ✅ (for MCP) | Public base URL (e.g. `https://voicerec-server.example.com`) |
+| `MCP_BASE_URL` | Optional | Displayed on the user settings screen (defaults to `${OAUTH_ISSUER}/api/mcp`) |
+| `OAUTH_ALLOWED_REDIRECT_URIS` | Optional | Comma-separated allow-list for additional OAuth `redirect_uri` prefixes (Claude.ai's default is always allowed) |
+| `SEED_USER_PASSWORD` | Optional | Password for seeded test users |
+| `SEED_ADMIN_PASSWORD` | Optional | Password for seeded admin user |
 
 ## Authentication
 
-This server uses three separate authentication methods depending on the access point:
+Three access paths, each with its own authentication scheme — **Basic Auth has been completely removed**.
 
 | Access Point | Method | Details |
 |---|---|---|
-| Mobile App API (`/api/*`) | HTTP Basic Auth | `Authorization: Basic base64(username:password)` per request |
-| User Portal (`/user/*`) | Cookie Session | HMAC-SHA256 signed cookie, 24h expiry |
-| Admin Panel (`/admin/*`) | Cookie Session | HMAC-SHA256 signed cookie, 24h expiry |
+| Mobile app / external API (`/api/*`) | **Bearer token** | `Authorization: Bearer <token>` where token is issued by `POST /api/auth/login` (stored as SHA-256 hash in `MobileToken` table) |
+| Web portal (`/user/*`, `/admin/*`) | **Cookie session** | Unified `session` cookie, HMAC-SHA256 signed, 24h expiry, `role=user` or `role=admin` |
+| Claude.ai MCP (`/api/mcp`) | **OAuth 2.0 + PKCE** (Bearer) or Basic (Client ID / Secret for curl testing) | Full authorization code flow with SHA-256 PKCE S256 |
 
-User and admin sessions are independent — logging in as a user does not grant admin access, and vice versa.
+Admin access is determined by `User.role === 'admin'` — the previous separate `AdminUser` table has been merged into `User`. A single unified `/user/login` or `/admin/login` page produces the same `session` cookie with role embedded.
 
-## Usage
+## Mobile Upload API
 
-### Mobile App API
+All endpoints below require `Authorization: Bearer <token>`.
 
-All endpoints require Basic Auth.
+### Getting a token (initial login)
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{"username": "test1", "password": "...", "deviceLabel": "iPhone"}
+```
+Returns `{token, userId, username, role}`. The plaintext token is returned **once only** — the app should save it in `SecureStore` / `AsyncStorage` and use it for subsequent requests. The server stores only the SHA-256 hash.
+
+### Recording endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/auth/test` | Test connection and verify credentials |
+| POST | `/api/auth/test` | Verify token (returns 200 if valid) |
 | POST | `/api/recordings/upload` | Upload a recording (multipart/form-data) |
 | GET | `/api/recordings` | List the authenticated user's recordings |
 | DELETE | `/api/recordings/[id]` | Delete a recording |
-| POST | `/api/recordings/[id]/transcribe` | Start Whisper transcription |
-| GET | `/api/recordings/[id]/transcription` | Get transcription result |
+| POST | `/api/recordings/[id]/transcribe` | Run the dual transcription pipeline |
+| GET | `/api/recordings/[id]/transcription` | Get gpt-4o transcription result |
 | POST | `/api/recordings/[id]/correct/layer1` | Run Layer 1 correction |
 | POST | `/api/recordings/[id]/correct/layer2` | Run Layer 2 correction |
 | POST | `/api/recordings/[id]/feedback` | Submit feedback |
 | POST | `/api/recordings/[id]/ground-truth` | Register ground truth |
-| POST | `/api/recordings/[id]/experiment` | Run experiment |
-| GET | `/api/ontology/domains` | List domains |
-| POST | `/api/ontology/domains` | Create domain |
-| GET | `/api/ontology/domains/[id]/entities` | List entities (searchable) |
-| POST | `/api/ontology/domains/[id]/entities` | Create entity |
-| POST | `/api/ontology/domains/[id]/evolve` | Run ontology evolution |
-| GET | `/api/ontology/domains/[id]/snapshots` | List snapshots |
-| GET/POST | `/api/ontology/relations` | Manage relations |
-| GET | `/api/evaluation/[recordingId]` | Get evaluation results |
-| POST | `/api/evaluation/[recordingId]` | Calculate evaluation |
+| POST | `/api/recordings/[id]/experiment` | Run evaluation experiment |
+| GET/POST | `/api/ontology/domains`, `/entities`, `/relations`, `/snapshots` | Ontology CRUD |
+| GET/POST | `/api/evaluation/*` | Evaluation results |
 
-#### Upload Parameters (form-data)
-- `file` (required): The audio file
-- `originalName`: Original filename (used to extract timestamp)
-- `displayName`: Display name for the recording
-- `duration`: Recording duration in milliseconds (auto-converted to seconds)
+### Upload parameters (multipart/form-data)
+- `file` (required) — the audio file
+- `originalName` — original filename in `yyyymmdd-hhmmss.ext` format (used to parse `recordedAt` in JST)
+- `displayName` — display name
+- `duration` — duration in milliseconds (auto-converted to seconds)
 
-Uploaded recordings are automatically transcribed via Whisper API after upload.
+On successful upload, the server:
+1. Stores the file under `./data/<username>/<filename>`
+2. Parses `recordedAt` from the filename (JST)
+3. **Fires the dual transcription pipeline asynchronously**
 
-### User Portal
+## Dual Transcription Pipeline
 
-Access at `/user/login`. General users can log in to view their own data only.
+Every recording goes through **two transcription passes** and the results are stored in **two different places**:
+
+### Pass 1 — gpt-4o-transcribe (high-quality full text)
+- Model: `gpt-4o-transcribe`
+- Output: a single combined text string per recording (no per-utterance timestamps; gpt-4o doesn't return them)
+- Saved to `Recording.transcriptionText` (plain string) and `Recording.transcriptionSegments` (JSON, chunk-level pseudo segments)
+
+### Pass 2 — whisper-1 (sentence-level segments with absolute timestamps)
+- Model: `whisper-1`
+- Response format: `verbose_json` (returns per-segment start/end offsets)
+- Runs **after** gpt-4o completes, in an isolated try/catch — if whisper-1 fails, gpt-4o's result is preserved and `Recording.whisperError` is populated
+- Each returned segment is stored as a row in the `Segment` table with:
+  - `startOffset` / `endOffset` — seconds from the start of the recording
+  - `startAt` / `endAt` — **absolute wall-clock timestamps** computed as `recordedAt + offset`
+  - `userId` (denormalized for indexed time-range queries across recordings)
+
+The `Recording.whisperTranscribedAt` field is set to the completion timestamp (null if not yet processed).
+
+### Language selection
+- The uploader's `User.transcriptionLanguage` field determines the language passed to both OpenAI calls (default: `ja`)
+- Users can change their own language at `/user/settings`
+- Admins can change any user's language from `/admin/users`
+
+## MCP Server (Claude.ai Remote Connector)
+
+voicerec-server exposes a Model Context Protocol endpoint so that Claude.ai can query recordings in natural language.
+
+### Transport
+JSON-RPC 2.0 over HTTP POST at `/api/mcp` (compatible with Claude.ai's Custom Connector feature).
+
+### OAuth 2.0 + PKCE Flow
+1. Claude.ai discovers OAuth metadata at `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/api/mcp`
+2. The user's browser is redirected to `/authorize` (requires session cookie; redirects to `/user/login?next=...` if not logged in)
+3. After login as the client's owner, an authorization code is issued and the browser is redirected back to `https://claude.ai/api/mcp/auth_callback` with `code` + `state`
+4. Claude.ai exchanges the code at `POST /token` with PKCE `code_verifier` (SHA-256 S256), `client_id`, `client_secret` → receives `access_token` (1h) + `refresh_token` (30d)
+5. Claude.ai sends `Authorization: Bearer <access_token>` to `POST /api/mcp`
+
+All tokens and auth codes are stored as SHA-256 hashes only — plaintext values are never persisted.
+
+### Issuing MCP credentials
+Users go to `/user/settings`, click "発行" (issue), and receive a one-time display of:
+1. **Remote MCP server URL**
+2. **OAuth Client ID**
+3. **OAuth Client Secret** (shown once, never again)
+
+These are then pasted into Claude.ai's Custom Connector setup dialog.
+
+### MCP Tools
+All tools are scoped to the authenticated user — no cross-user data exposure.
+
+| Tool | Purpose |
+|---|---|
+| `list_recordings` | List recordings in a date range (with `hasWhisperData` flag) |
+| `get_transcript_by_time` | Return whisper segments spanning an absolute time range (e.g. "yesterday 15:50–15:55"), crossing multiple recordings |
+| `get_transcript_full` | Return full transcription for a specific recording (`format=gpt4o` default, or `format=whisper` for timestamped segments) |
+| `search_transcripts` | Keyword search across whisper segments |
+
+Time-based queries only match recordings where `whisperTranscribedAt IS NOT NULL`. Unprocessed recordings are invisible to time-range queries (returns empty arrays).
+
+## Web Portals
+
+### User Portal (`/user/*`)
 
 | Page | Description |
 |---|---|
-| `/user/login` | User login page |
-| `/user/recordings` | View own recordings — playback, transcription results |
+| `/user/login` | Login (supports `?next=` and `?hint=` parameters for OAuth redirects) |
+| `/user/recordings` | Own recordings — playback, GPT-4o transcription, whisper segments viewer |
+| `/user/settings` | Transcription language + MCP credential issuance / revocation |
 
-**User permissions:**
-- View and play own recordings
-- View own transcription results
-- Cannot delete recordings
-- Cannot view other users' data
-- Cannot access admin functions (user management, ontology, evaluation, etc.)
-
-### Admin Panel
-
-Access at `/admin/login`. Administrators have full access to all features.
+### Admin Panel (`/admin/*`)
 
 | Page | Description |
 |---|---|
-| `/admin/login` | Admin login page |
-| `/admin/users` | Manage app users — create, edit, delete |
-| `/admin/recordings` | View all recordings — user filter, playback, delete, transcribe |
-| `/admin/admins` | Manage admin users — create, edit, delete |
-| `/admin/minutes` | Meeting minutes — list and detail view |
-| `/admin/ontology` | Ontology management — domains, entities, relations, snapshots, export |
-| `/admin/evaluation` | Evaluation results — CER metrics, DKDP ratio analysis |
+| `/admin/login` | Admin login (rejects non-admin users) |
+| `/admin/users` | Manage app users, edit per-user transcription language |
+| `/admin/recordings` | View all recordings, impersonation-aware, whisper segments viewer |
+| `/admin/admins` | Manage other admin users |
+| `/admin/minutes` | Meeting minutes |
+| `/admin/ontology` | Ontology CRUD — domains, entities, relations, snapshots, export |
+| `/admin/evaluation` | CER / DKDP evaluation results |
 
-**Admin permissions:**
-- All user permissions, plus:
-- View and manage all users' recordings
-- Delete recordings
-- Create, edit, and delete users and admin users
-- Manage ontology (domains, entities, relations, evolution)
-- View evaluation results
-- Trigger transcription and corrections
-
-### Permission Comparison
-
-| Feature | General User | Admin |
-|---|---|---|
-| View own recordings | o | o |
-| Play own recordings | o | o |
-| View own transcriptions | o | o |
-| Delete recordings | x | o |
-| View other users' recordings | x | o |
-| User management | x | o |
-| Admin management | x | o |
-| Ontology management | x | o |
-| Evaluation results | x | o |
-| Meeting minutes | x | o |
+### Impersonation
+Admins can call `POST /admin/api/impersonate` with `{userId}` to set an `impersonated_user_id` cookie. While set, admin-side recording listings are filtered to the impersonated user's data. Pass `{userId: null}` to clear.
 
 ## Data Models
 
-### Core Models
-- **User** — App users (Basic Auth + User Portal login)
-- **AdminUser** — Admin panel users with role field
-- **Recording** — Audio files with metadata, transcription status, and results
-- **Domain** — Discourse domains (e.g., multi-client maintenance, university systems)
-- **OntologyEntity** — Domain-specific terms with labels, phonetic hints, definitions
-- **OntologyRelation** — Relationships between entities (isUsedIn, controls, relatedTo, etc.)
-- **OntologySnapshot** — Weekly snapshots of ontology state
-- **CorrectionResult** — Layer 1/2 correction outputs per recording/domain/condition
-- **GroundTruth** — Annotator reference data for evaluation
-- **Feedback** — User feedback on transcription quality
-- **EvaluationResult** — CER, DKDP metrics per recording/domain/condition
+### Core
+- **User** — unified user table with `role` (user/admin), `transcriptionLanguage`, and optional MCP client credentials (`mcpClientId`, `mcpClientSecretHash`). Replaces the legacy separate AdminUser table.
+- **Recording** — audio metadata + gpt-4o transcription + `recordedAt` (absolute start time) + `whisperTranscribedAt` (null = whisper-1 not yet run) + `whisperError`.
+- **Segment** — 1 row per whisper-1 utterance segment with absolute `startAt`/`endAt` timestamps. Indexed by `(userId, startAt)` and `(userId, endAt)` for efficient time-range queries across recordings.
+- **MobileToken** — Bearer tokens for the mobile app / external API. Hashed with SHA-256.
+- **OAuthAuthCode** — short-lived (5 min) authorization codes for the OAuth flow. SHA-256 hashed, single-use (`consumedAt`).
+- **OAuthAccessToken** — OAuth access tokens (1h) and refresh tokens (30d), both SHA-256 hashed.
+
+### Ontology / Correction
+- **Domain**, **OntologyEntity**, **OntologyRelation**, **OntologySnapshot**
+- **CorrectionResult**, **GroundTruth**, **Feedback**, **EvaluationResult**
 
 ## File Storage
 
-Uploaded recordings are saved to `./data/<username>/` with filenames in `yyyymmdd-hhmmss.ext` format based on the recording start time. If a filename already exists, a numeric suffix is appended (e.g., `20260303-143022_1.m4a`).
+Uploaded recordings are saved to `./data/<username>/` with filenames in `yyyymmdd-hhmmss.ext` format. Duplicates get a numeric suffix (e.g. `20260414-143022_1.m4a`).
+
+## E2E Tests
+
+```bash
+npm run test:e2e
+```
+
+Runs 35 test cases covering the full upload → dual transcription → auth → OAuth → MCP pipeline against the live server and database (creates and cleans up test users prefixed with `e2e_`). One 11-second Japanese audio fixture (auto-generated via OpenAI TTS into `tests/fixtures/audio/`, gitignored) is used for all cases to minimize OpenAI API cost (~$0.02 per run).
 
 ## Default Seed Data
 
-The seed script creates:
 - **3 test users**: test1, test2, test3 (password from `SEED_USER_PASSWORD`)
-- **1 admin user**: admin (password from `SEED_ADMIN_PASSWORD`)
+- **1 admin user**: admin (`role=admin`, password from `SEED_ADMIN_PASSWORD`)
 - **4 domains**: A (multi-client maintenance), B (specific client development), C (HQ leader), D (university systems)
-- **Domain-specific entities and relations** with phonetic hints and co-occurrence weights
-- **Week 0 snapshots** for each domain
+- **Domain entities and relations** with phonetic hints and co-occurrence weights
+- **Week 0 ontology snapshots** per domain
 
 ## Notes
-- `SESSION_SECRET` must be set in `.env` — the server will refuse to start without it
-- `OPENAI_API_KEY` is required for Whisper transcription functionality
-- Seed passwords default to `changeme` if environment variables are not set
-- For production, change all default passwords immediately after first setup
-- Duration values sent from the mobile app in milliseconds are automatically converted to seconds on upload
-- Audio files are served with proper MIME types for in-browser playback
+
+- `SESSION_SECRET` and `OAUTH_ISSUER` must be set for OAuth to work correctly
+- Basic Auth has been **completely removed** from `/api/*` — old mobile app builds that use Basic Auth will receive 401
+- `whisper-1` is significantly more tolerant of low-bitrate audio than gpt-4o's transcribe model; however, the mobile app's default preset (12kHz / 16kbps) can still trigger whisper-1 hallucinations on very quiet audio. Use the "high quality" recording mode (16kHz / 32kbps) in the mobile app's settings for improved results.
+- Transcription cost: ~$0.006/min for gpt-4o-transcribe + ~$0.006/min for whisper-1 (runs in parallel in spirit but sequentially in code). Total approximately $0.012/min of audio.
+- For production, change default passwords immediately after first setup.
 
 ## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT — see the LICENSE file.
 
 ---
 
 # voicerec-server
 
 ## 概要
-voicerec-serverは、モバイルデバイスからアップロードされた音声録音を受信・保存・管理するNext.jsサーバーです。Expoベースのモバイル録音アプリ[voicerec](https://github.com/daishir0/voicerec)のバックエンドコンパニオンとして機能します。
+voicerec-server は Next.js 14 製のバックエンドサーバーで、録音アップロード受信、二重文字起こし、および MCP (Model Context Protocol) によるプログラマブルアクセスを提供します。Expo 製モバイル録音アプリ [voicerec](https://github.com/daishir0/voicerec) のコンパニオンサーバーであり、さらに Claude.ai 互換の MCP エンドポイントを公開することで、録音データを自然言語で問い合わせることができます。
 
 主な機能:
-- Basic Auth付きの録音アップロード・一覧・削除用REST API
-- OpenAI Whisper APIによる自動文字起こし
-- オントロジーベースのドメイン特化テキスト補正（Layer 1 / Layer 2）
-- セッションベースのユーザーポータル（自分の録音・文字起こし閲覧）
-- 全管理機能を持つ管理パネル（ユーザー・録音・オントロジー・評価）
-- HMAC署名Cookie Session認証（ユーザー・管理者それぞれ独立）
-- Prisma ORMによるPostgreSQLデータベース
+- モバイルアップロード API は **Bearer トークン認証** (Basic 認証は完全削除)
+- **二重文字起こしパイプライン**: gpt-4o-transcribe で高品質な全文、whisper-1 (`verbose_json`) で絶対時刻付きの発話単位セグメント
+- **MCP サーバー**: Claude.ai リモートコネクタ向けに **OAuth 2.0 + PKCE** 認可コードフロー実装
+- ユーザー単位の文字起こし言語設定 (ja / en / zh / ko / es / fr / de / it / pt / ru)
+- オントロジーベースのドメイン特化補正 (Layer 1 / Layer 2)
+- `role` カラムで統合された User モデルと HMAC 署名付き `session` Cookie
+- 管理者による他ユーザーデータ閲覧 (impersonation)
+- Prisma ORM + PostgreSQL
 - ユーザー名別のファイルストレージとタイムスタンプベースのファイル名
+- E2E テストスイート (`npm run test:e2e`) — アップロード/文字起こし/認証/OAuth/MCP の 35 ケース
 
 ## インストール方法
 
@@ -224,12 +281,7 @@ npm install
 3. 環境変数を設定:
 ```bash
 cp .env.example .env
-# .envを編集:
-#   DATABASE_URL       - PostgreSQL接続文字列（例: postgresql://user:password@localhost:5432/voicerec）
-#   SESSION_SECRET     - 生成方法: openssl rand -hex 32
-#   SEED_USER_PASSWORD - テストユーザー（test1, test2, test3）のパスワード
-#   SEED_ADMIN_PASSWORD - 管理者ユーザーのパスワード
-#   OPENAI_API_KEY     - Whisper文字起こし用OpenAI APIキー
+# .env を編集 (下記「環境変数」を参照)
 ```
 
 4. データベースを初期化:
@@ -241,147 +293,205 @@ npx tsx prisma/seed.ts
 
 5. サーバーを起動:
 ```bash
-npm run dev -- --port 18083
+npm run dev          # 開発モード (port 18083)
+# または
+npm run build && npm run start   # 本番モード
 ```
+
+## 環境変数
+
+| 変数名 | 必須 | 用途 |
+|---|---|---|
+| `DATABASE_URL` | ✅ | PostgreSQL 接続文字列 |
+| `SESSION_SECRET` | ✅ | Cookie 署名用の HMAC キー (`openssl rand -hex 32`) |
+| `OPENAI_API_KEY` | ✅ | gpt-4o-transcribe と whisper-1 の両方で使用 |
+| `OAUTH_ISSUER` | ✅ (MCP 使用時) | 公開ベース URL (例: `https://voicerec-server.example.com`) |
+| `MCP_BASE_URL` | 任意 | ユーザー設定画面に表示するURL (未設定時は `${OAUTH_ISSUER}/api/mcp`) |
+| `OAUTH_ALLOWED_REDIRECT_URIS` | 任意 | カンマ区切りで追加の OAuth `redirect_uri` プレフィックスを許可 (Claude.ai の既定は常に許可) |
+| `SEED_USER_PASSWORD` | 任意 | Seed テストユーザーのパスワード |
+| `SEED_ADMIN_PASSWORD` | 任意 | Seed 管理者のパスワード |
 
 ## 認証方式
 
-アクセスポイントに応じて3つの認証方式を使い分けます:
+3 つのアクセスパスごとに認証方式が分かれています。**Basic 認証は完全に削除済みです。**
 
 | アクセスポイント | 方式 | 詳細 |
 |---|---|---|
-| モバイルアプリAPI (`/api/*`) | HTTP Basic Auth | リクエスト毎に `Authorization: Basic base64(ユーザー名:パスワード)` |
-| ユーザーポータル (`/user/*`) | Cookie Session | HMAC-SHA256署名Cookie、24時間有効 |
-| 管理パネル (`/admin/*`) | Cookie Session | HMAC-SHA256署名Cookie、24時間有効 |
+| モバイルアプリ / 外部 API (`/api/*`) | **Bearer トークン** | `Authorization: Bearer <token>` 。トークンは `POST /api/auth/login` で発行され、DB には SHA-256 ハッシュのみ保存 |
+| Web ポータル (`/user/*`, `/admin/*`) | **Cookie セッション** | 統一 `session` Cookie、HMAC-SHA256 署名、24時間有効、`role=user` or `role=admin` |
+| Claude.ai MCP (`/api/mcp`) | **OAuth 2.0 + PKCE** (Bearer) または Basic (curl テスト互換) | PKCE S256 認可コードフロー |
 
-ユーザーセッションと管理者セッションは独立しています。ユーザーとしてログインしても管理者権限は付与されず、その逆も同様です。
+管理者権限は `User.role === 'admin'` で判定されます。旧 `AdminUser` テーブルは `User` に統合され、ログイン画面は `/user/login` または `/admin/login` から同じ `session` Cookie を発行します。
 
-## 使い方
+## モバイルアップロード API
 
-### モバイルアプリAPI
+以下のエンドポイントはすべて `Authorization: Bearer <token>` が必須です。
 
-すべてのエンドポイントにBasic Auth認証が必要です。
+### 初回ログイン (トークン取得)
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{"username": "test1", "password": "...", "deviceLabel": "iPhone"}
+```
+`{token, userId, username, role}` を返します。平文トークンは **1回だけ** 返却され、アプリ側で `SecureStore` / `AsyncStorage` に保存してください。サーバーには SHA-256 ハッシュのみ保存されます。
+
+### 録音系エンドポイント
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| POST | `/api/auth/test` | 接続テスト・認証情報の検証 |
-| POST | `/api/recordings/upload` | 録音アップロード（multipart/form-data） |
+| POST | `/api/auth/test` | トークン検証 (成功時 200) |
+| POST | `/api/recordings/upload` | 録音アップロード (multipart/form-data) |
 | GET | `/api/recordings` | 認証ユーザーの録音一覧 |
 | DELETE | `/api/recordings/[id]` | 録音削除 |
-| POST | `/api/recordings/[id]/transcribe` | Whisper文字起こし開始 |
-| GET | `/api/recordings/[id]/transcription` | 文字起こし結果取得 |
-| POST | `/api/recordings/[id]/correct/layer1` | Layer 1補正実行 |
-| POST | `/api/recordings/[id]/correct/layer2` | Layer 2補正実行 |
+| POST | `/api/recordings/[id]/transcribe` | 二重文字起こし実行 |
+| GET | `/api/recordings/[id]/transcription` | gpt-4o 結果取得 |
+| POST | `/api/recordings/[id]/correct/layer1` | Layer 1 補正 |
+| POST | `/api/recordings/[id]/correct/layer2` | Layer 2 補正 |
 | POST | `/api/recordings/[id]/feedback` | フィードバック送信 |
 | POST | `/api/recordings/[id]/ground-truth` | 教師データ登録 |
-| POST | `/api/recordings/[id]/experiment` | 実験実行 |
-| GET | `/api/ontology/domains` | ドメイン一覧 |
-| POST | `/api/ontology/domains` | ドメイン作成 |
-| GET | `/api/ontology/domains/[id]/entities` | エンティティ一覧（検索可） |
-| POST | `/api/ontology/domains/[id]/entities` | エンティティ作成 |
-| POST | `/api/ontology/domains/[id]/evolve` | オントロジー進化実行 |
-| GET | `/api/ontology/domains/[id]/snapshots` | スナップショット一覧 |
-| GET/POST | `/api/ontology/relations` | 関係管理 |
-| GET | `/api/evaluation/[recordingId]` | 評価結果取得 |
-| POST | `/api/evaluation/[recordingId]` | 評価計算 |
+| POST | `/api/recordings/[id]/experiment` | 評価実験実行 |
+| GET/POST | `/api/ontology/domains`, `/entities`, `/relations`, `/snapshots` | オントロジーCRUD |
+| GET/POST | `/api/evaluation/*` | 評価結果 |
 
-#### アップロードパラメータ（form-data）
-- `file`（必須）: 音声ファイル
-- `originalName`: 元のファイル名（タイムスタンプ抽出に使用）
-- `displayName`: 録音の表示名
-- `duration`: 録音時間（ミリ秒、サーバーで自動的に秒に変換）
+### アップロードパラメータ (multipart/form-data)
+- `file` (必須) — 音声ファイル
+- `originalName` — `yyyymmdd-hhmmss.ext` 形式の元ファイル名 (`recordedAt` を JST でパース)
+- `displayName` — 表示名
+- `duration` — 録音時間 (ミリ秒、サーバーで秒に自動変換)
 
-アップロード後、Whisper APIによる文字起こしが自動実行されます。
+アップロード成功時、サーバーは:
+1. ファイルを `./data/<username>/<filename>` に保存
+2. ファイル名から `recordedAt` を JST 解釈でパース
+3. **二重文字起こしパイプラインを非同期実行**
 
-### ユーザーポータル
+## 二重文字起こしパイプライン
 
-`/user/login` からアクセス。一般ユーザーは自分のデータのみ閲覧可能です。
+すべての録音は **2 つの文字起こしパス** を通過し、結果は **2 つの異なる場所** に保存されます。
+
+### パス1 — gpt-4o-transcribe (高品質な全文)
+- モデル: `gpt-4o-transcribe`
+- 出力: 録音単位で1つの結合済みテキスト文字列 (gpt-4o は発話単位のタイムスタンプを返さない)
+- 保存先: `Recording.transcriptionText` (平文) と `Recording.transcriptionSegments` (JSON、チャンク単位の擬似セグメント)
+
+### パス2 — whisper-1 (絶対時刻付き発話単位セグメント)
+- モデル: `whisper-1`
+- レスポンス形式: `verbose_json` (セグメントごとの start/end オフセットあり)
+- gpt-4o 完了後に **隔離された try/catch 内で実行**。失敗しても gpt-4o の結果は壊さず、`Recording.whisperError` に記録
+- 各セグメントは `Segment` テーブルの1行として保存:
+  - `startOffset` / `endOffset` — 録音先頭からの秒数
+  - `startAt` / `endAt` — **絶対時刻** (`recordedAt + offset` で計算)
+  - `userId` (複数録音をまたぐ時刻範囲クエリを高速化するため非正規化)
+
+`Recording.whisperTranscribedAt` が完了時刻に設定されます (未処理時は null)。
+
+### 言語選択
+- アップロード時、uploader の `User.transcriptionLanguage` を両方の OpenAI 呼び出しに渡します (デフォルト `ja`)
+- ユーザーは `/user/settings` で自分の言語を変更可能
+- 管理者は `/admin/users` で任意ユーザーの言語を変更可能
+
+## MCP サーバー (Claude.ai リモートコネクタ)
+
+voicerec-server は Model Context Protocol エンドポイントを公開し、Claude.ai から自然言語で録音データを検索できるようにします。
+
+### トランスポート
+`/api/mcp` で JSON-RPC 2.0 over HTTP POST (Claude.ai の Custom Connector 機能互換)。
+
+### OAuth 2.0 + PKCE フロー
+1. Claude.ai が `/.well-known/oauth-authorization-server` と `/.well-known/oauth-protected-resource/api/mcp` でメタデータを取得
+2. ユーザーのブラウザが `/authorize` にリダイレクトされる (session Cookie 必須。未ログインなら `/user/login?next=...`)
+3. Client 所有者としてログインすると認可コードが発行され、`https://claude.ai/api/mcp/auth_callback?code=...&state=...` にリダイレクト
+4. Claude.ai が `POST /token` で PKCE `code_verifier` (SHA-256 S256)、`client_id`、`client_secret` を付けてコードを交換し、`access_token` (1時間) と `refresh_token` (30日) を取得
+5. Claude.ai が `Authorization: Bearer <access_token>` で `POST /api/mcp` を呼び出す
+
+トークンと認可コードはすべて SHA-256 ハッシュでのみ保存され、平文は永続化されません。
+
+### MCP クレデンシャル発行
+ユーザーが `/user/settings` で「発行」ボタンを押すと、**1回限り** 以下の3つが表示されます:
+1. **Remote MCP server URL**
+2. **OAuth Client ID**
+3. **OAuth Client Secret** (このときのみ表示、以降は取得不可)
+
+これらを Claude.ai の Custom Connector 設定ダイアログに貼り付けます。
+
+### MCP ツール
+すべてのツールは認証ユーザー ID でスコープされ、他ユーザーのデータは一切返しません。
+
+| ツール | 用途 |
+|---|---|
+| `list_recordings` | 期間内の録音一覧 (`hasWhisperData` フラグ付き) |
+| `get_transcript_by_time` | 絶対時刻範囲にかかる whisper セグメントを時系列順に返す (例:「昨日 15:50〜15:55 の発言」)、複数録音を横断 |
+| `get_transcript_full` | 特定録音の全文 (`format=gpt4o` デフォルト、`format=whisper` で時刻付きセグメント) |
+| `search_transcripts` | whisper セグメントの全文キーワード検索 |
+
+時刻ベースクエリは `whisperTranscribedAt IS NOT NULL` の録音のみヒットします。未処理録音は空配列で返ります。
+
+## Web ポータル
+
+### ユーザーポータル (`/user/*`)
 
 | ページ | 説明 |
 |---|---|
-| `/user/login` | ユーザーログインページ |
-| `/user/recordings` | 自分の録音一覧 — 再生、文字起こし結果閲覧 |
+| `/user/login` | ログイン (`?next=` と `?hint=` パラメータを OAuth リダイレクト用にサポート) |
+| `/user/recordings` | 自分の録音一覧 — 再生、GPT-4o 文字起こし、whisper セグメントビュー |
+| `/user/settings` | 文字起こし言語 + MCP クレデンシャル発行/失効 |
 
-**ユーザー権限:**
-- 自分の録音の閲覧・再生
-- 自分の文字起こし結果の閲覧
-- 録音の削除は不可
-- 他ユーザーのデータ閲覧は不可
-- 管理機能（ユーザー管理、オントロジー、評価等）へのアクセスは不可
-
-### 管理パネル
-
-`/admin/login` からアクセス。管理者はすべての機能にフルアクセスできます。
+### 管理パネル (`/admin/*`)
 
 | ページ | 説明 |
 |---|---|
-| `/admin/login` | 管理者ログインページ |
-| `/admin/users` | アプリユーザー管理 — 作成・編集・削除 |
-| `/admin/recordings` | 全録音表示 — ユーザー絞り込み、再生、削除、文字起こし |
-| `/admin/admins` | 管理者ユーザー管理 — 作成・編集・削除 |
-| `/admin/minutes` | 議事録 — 一覧・詳細表示 |
-| `/admin/ontology` | オントロジー管理 — ドメイン、エンティティ、関係、スナップショット、エクスポート |
-| `/admin/evaluation` | 評価結果 — CER指標、DKDP比分析 |
+| `/admin/login` | 管理者ログイン (非 admin ロールは拒否) |
+| `/admin/users` | アプリユーザー管理、ユーザー別の文字起こし言語編集 |
+| `/admin/recordings` | 全録音表示 (impersonation 対応)、whisper セグメントビュー |
+| `/admin/admins` | 管理者ユーザー管理 |
+| `/admin/minutes` | 議事録 |
+| `/admin/ontology` | オントロジー CRUD (ドメイン、エンティティ、関係、スナップショット、エクスポート) |
+| `/admin/evaluation` | CER / DKDP 評価結果 |
 
-**管理者権限:**
-- ユーザー権限のすべてに加えて:
-- 全ユーザーの録音の閲覧・管理
-- 録音の削除
-- ユーザー・管理者の作成・編集・削除
-- オントロジー管理（ドメイン、エンティティ、関係、進化）
-- 評価結果の閲覧
-- 文字起こし・補正の実行
-
-### 権限比較表
-
-| 機能 | 一般ユーザー | 管理者 |
-|---|---|---|
-| 自分の録音閲覧 | o | o |
-| 自分の録音再生 | o | o |
-| 文字起こし結果閲覧 | o | o |
-| 録音削除 | x | o |
-| 他ユーザーの録音閲覧 | x | o |
-| ユーザー管理 | x | o |
-| 管理者管理 | x | o |
-| オントロジー管理 | x | o |
-| 評価結果 | x | o |
-| 議事録 | x | o |
+### Impersonation (管理者の他ユーザーデータ閲覧)
+管理者は `POST /admin/api/impersonate` に `{userId}` を送ると `impersonated_user_id` Cookie がセットされ、以降の `/admin/recordings` などは指定ユーザーのデータだけに絞られます。`{userId: null}` で解除。
 
 ## データモデル
 
-### 主要モデル
-- **User** — アプリユーザー（Basic Auth + ユーザーポータルログイン）
-- **AdminUser** — 管理パネルユーザー（roleフィールド付き）
-- **Recording** — 音声ファイルとメタデータ、文字起こしステータス・結果
-- **Domain** — 談話ドメイン（例: 複数顧客保守、大学システム）
-- **OntologyEntity** — ドメイン特化用語（ラベル、音韻ヒント、定義）
-- **OntologyRelation** — エンティティ間の関係（isUsedIn, controls, relatedTo等）
-- **OntologySnapshot** — オントロジー状態の週次スナップショット
-- **CorrectionResult** — 録音/ドメイン/条件ごとのLayer 1/2補正結果
-- **GroundTruth** — 評価用アノテーター教師データ
-- **Feedback** — 文字起こし品質に対するユーザーフィードバック
-- **EvaluationResult** — 録音/ドメイン/条件ごとのCER、DKDP指標
+### コア
+- **User** — 統合ユーザーテーブル。`role` (user/admin)、`transcriptionLanguage`、オプショナルな MCP クライアントクレデンシャル (`mcpClientId` / `mcpClientSecretHash`)。旧 `AdminUser` テーブルは統合済み。
+- **Recording** — 音声メタデータ + gpt-4o 文字起こし + `recordedAt` (絶対開始時刻) + `whisperTranscribedAt` (null = whisper-1 未処理) + `whisperError`
+- **Segment** — whisper-1 発話単位のセグメント1行ずつ。`startAt`/`endAt` は絶対時刻。`(userId, startAt)` と `(userId, endAt)` にインデックス付き
+- **MobileToken** — モバイル/外部 API 用 Bearer トークン (SHA-256 ハッシュ)
+- **OAuthAuthCode** — OAuth 認可コード (5分 TTL)、SHA-256 ハッシュ、`consumedAt` で1回限り使用を強制
+- **OAuthAccessToken** — OAuth アクセストークン (1時間) と リフレッシュトークン (30日)、両方とも SHA-256 ハッシュ
+
+### オントロジー / 補正
+- **Domain**, **OntologyEntity**, **OntologyRelation**, **OntologySnapshot**
+- **CorrectionResult**, **GroundTruth**, **Feedback**, **EvaluationResult**
 
 ## ファイルストレージ
 
-アップロードされた録音は `./data/<ユーザー名>/` に `yyyymmdd-hhmmss.拡張子` 形式のファイル名で保存されます（録音開始時刻基準）。同名ファイルが存在する場合は連番が付与されます（例: `20260303-143022_1.m4a`）。
+アップロードされた録音は `./data/<username>/` に `yyyymmdd-hhmmss.ext` 形式で保存されます。同名ファイルは連番付与 (例: `20260414-143022_1.m4a`)。
 
-## デフォルトシードデータ
+## E2E テスト
 
-Seedスクリプトは以下を作成します:
-- **テストユーザー3名**: test1, test2, test3（パスワードは `SEED_USER_PASSWORD`）
-- **管理者1名**: admin（パスワードは `SEED_ADMIN_PASSWORD`）
-- **ドメイン4つ**: A（複数顧客保守）、B（特定顧客開発）、C（本部リーダー）、D（大学システム）
-- **ドメイン別エンティティ・関係**: 音韻ヒント・共起度付き
-- **各ドメインのWeek 0スナップショット**
+```bash
+npm run test:e2e
+```
+
+アップロード → 二重文字起こし → 認証 → OAuth → MCP の全パイプラインを実サーバー/実 DB に対して実行する 35 ケース (プレフィックス `e2e_` のテストユーザーを実行ごとに作成/クリーンアップ)。OpenAI API コスト最小化のため 1 本の 11 秒日本語音声フィクスチャ (OpenAI TTS で自動生成、`tests/fixtures/audio/` 配下・gitignore) で全ケースを回します。1 回あたり約 $0.02。
+
+## デフォルト Seed データ
+
+- **テストユーザー3名**: test1, test2, test3 (`SEED_USER_PASSWORD`)
+- **管理者1名**: admin (`role=admin`, `SEED_ADMIN_PASSWORD`)
+- **ドメイン4つ**: A (複数顧客保守), B (特定顧客開発), C (本部リーダー), D (大学システム)
+- **ドメイン別エンティティ・関係** (音韻ヒント・共起度付き)
+- **各ドメインの Week 0 スナップショット**
 
 ## 注意点
-- `SESSION_SECRET` は `.env` に必ず設定してください — 未設定の場合サーバーは起動を拒否します
-- `OPENAI_API_KEY` はWhisper文字起こし機能に必要です
-- Seedパスワードは環境変数未設定の場合 `changeme` がデフォルト
+
+- `SESSION_SECRET` と `OAUTH_ISSUER` は OAuth を動かすために必須
+- Basic 認証は `/api/*` から **完全削除済み**。古いアプリ (Basic 認証版) からのリクエストは全て 401 になります
+- `whisper-1` は低ビットレート音声への耐性が比較的高いですが、モバイルアプリのデフォルトプリセット (12kHz/16kbps) では静かな音声で whisper-1 がハルシネーションを起こすことがあります。モバイル側の設定で「高品質録音」モード (16kHz/32kbps) に切り替えると改善します
+- 文字起こしコスト: gpt-4o-transcribe ~$0.006/分 + whisper-1 ~$0.006/分 = 合計 約 $0.012/音声分
 - 本番環境では、初期セットアップ後に直ちにすべてのデフォルトパスワードを変更してください
-- モバイルアプリからミリ秒で送信されるDuration値は、アップロード時に自動的に秒に変換されます
-- 音声ファイルはブラウザ内再生用に適切なMIMEタイプで配信されます
 
 ## ライセンス
-このプロジェクトはMITライセンスの下でライセンスされています。詳細はLICENSEファイルを参照してください。
+MIT — LICENSE ファイルを参照してください。
