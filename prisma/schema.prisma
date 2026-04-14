@@ -21,6 +21,8 @@ model User {
   feedbacks               Feedback[]
   segments                Segment[]
   mobileTokens            MobileToken[]
+  oauthAuthCodes          OAuthAuthCode[]
+  oauthAccessTokens       OAuthAccessToken[]
   createdAt               DateTime    @default(now())
   updatedAt               DateTime    @updatedAt
 }
@@ -36,6 +38,42 @@ model MobileToken {
   revokedAt   DateTime?
 
   @@index([userId])
+}
+
+model OAuthAuthCode {
+  id                  String   @id @default(uuid())
+  code                String   @unique
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId            String
+  redirectUri         String
+  codeChallenge       String
+  codeChallengeMethod String
+  scope               String?
+  expiresAt           DateTime
+  consumedAt          DateTime?
+  createdAt           DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model OAuthAccessToken {
+  id           String    @id @default(uuid())
+  tokenHash    String    @unique
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId     String
+  scope        String?
+  expiresAt    DateTime
+  refreshHash  String?   @unique
+  refreshExpAt DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Recording {

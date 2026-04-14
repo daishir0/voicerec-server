@@ -462,6 +462,197 @@ async function testsPhaseC() {
     assertEq(result.structuredContent.query, '会議', 'query echoed');
   });
 
+  // ===== OAuth 2.0 + PKCE (Claude.ai リモートMCP) =====
+
+  await test('C-OAuth: /.well-known/oauth-authorization-server がメタデータを返す', async () => {
+    const res = await httpRaw('GET', '/.well-known/oauth-authorization-server');
+    assertEq(res.status, 200, 'metadata 200');
+    const data = res.json() as {
+      issuer: string;
+      authorization_endpoint: string;
+      token_endpoint: string;
+      code_challenge_methods_supported: string[];
+    };
+    assert(data.issuer.length > 0, 'issuer present');
+    assert(data.authorization_endpoint.endsWith('/authorize'), 'auth endpoint');
+    assert(data.token_endpoint.endsWith('/token'), 'token endpoint');
+    assert(data.code_challenge_methods_supported.includes('S256'), 'PKCE S256 supported');
+  });
+
+  await test('C-OAuth: /.well-known/oauth-protected-resource/api/mcp が resource を返す', async () => {
+    const res = await httpRaw('GET', '/.well-known/oauth-protected-resource/api/mcp');
+    assertEq(res.status, 200, 'protected resource metadata 200');
+    const data = res.json() as { resource: string; authorization_servers: string[] };
+    assert(data.resource.endsWith('/api/mcp'), 'resource path');
+    assert(data.authorization_servers.length > 0, 'auth servers');
+  });
+
+  await test('C-OAuth: /authorize 未ログイン時は /user/login?next=... へ 307', async () => {
+    const qs = new URLSearchParams({
+      response_type: 'code',
+      client_id: state.mcpClientId!,
+      redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+      code_challenge: 'test_challenge_value_for_smoke',
+      code_challenge_method: 'S256',
+      state: 'xyz',
+    });
+    // fetch でリダイレクトを追わない
+    const res = await fetch(`${BASE_URL}/authorize?${qs.toString()}`, { redirect: 'manual' });
+    assertEq(res.status, 307, '307 redirect');
+    const location = res.headers.get('location') || '';
+    assert(location.includes('/user/login'), 'redirected to login');
+    assert(location.includes('next='), 'next param present');
+  });
+
+  await test('C-OAuth: 認可コード発行 → /token で access_token 取得 → MCP に Bearer で接続', async () => {
+    // PKCE code_verifier と challenge を作る
+    const crypto = await import('node:crypto');
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto
+      .createHash('sha256')
+      .update(codeVerifier)
+      .digest('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    // userA としてログイン (cookies)
+    const cookies = await loginAsSession(state.userA!.username, state.userA!.password);
+
+    // /authorize にログイン状態でアクセス → 認可コードを redirect_uri に付けて返す
+    const qs = new URLSearchParams({
+      response_type: 'code',
+      client_id: state.mcpClientId!,
+      redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      state: 'e2e_state_xyz',
+    });
+    const authRes = await fetch(`${BASE_URL}/authorize?${qs.toString()}`, {
+      headers: { Cookie: cookies.join('; ') },
+      redirect: 'manual',
+    });
+    assertEq(authRes.status, 307, 'authorize redirect');
+    const location = authRes.headers.get('location') || '';
+    assert(location.startsWith('https://claude.ai/api/mcp/auth_callback'), 'redirected to claude.ai');
+    const cb = new URL(location);
+    const code = cb.searchParams.get('code');
+    const returnedState = cb.searchParams.get('state');
+    assert(code && code.length > 20, 'code present');
+    assertEq(returnedState, 'e2e_state_xyz', 'state echoed');
+
+    // /token で code → access_token 交換
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: code!,
+      redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+      client_id: state.mcpClientId!,
+      client_secret: state.mcpClientSecret!,
+      code_verifier: codeVerifier,
+    });
+    const tokenRes = await fetch(`${BASE_URL}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    assertEq(tokenRes.status, 200, 'token 200');
+    const tokenData = (await tokenRes.json()) as {
+      access_token: string;
+      token_type: string;
+      expires_in: number;
+      refresh_token: string;
+    };
+    assertEq(tokenData.token_type, 'Bearer', 'Bearer');
+    assert(tokenData.access_token.length > 20, 'access_token present');
+    assert(tokenData.refresh_token.length > 20, 'refresh_token present');
+
+    // access_token を Bearer で MCP に送信 → 自分の録音が返る
+    const mcpRes = await fetch(`${BASE_URL}/api/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tokenData.access_token}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 99,
+        method: 'tools/call',
+        params: { name: 'list_recordings', arguments: { limit: 10 } },
+      }),
+    });
+    assertEq(mcpRes.status, 200, 'mcp status');
+    const mcpData = (await mcpRes.json()) as {
+      result: { structuredContent: { count: number; recordings: { id: string }[] } };
+    };
+    const ours = mcpData.result.structuredContent.recordings.find(
+      (r) => r.id === state.uploadedRecordingId,
+    );
+    assert(ours !== undefined, 'uploaded recording visible via OAuth bearer');
+
+    // refresh_token で更新
+    const refreshBody = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: tokenData.refresh_token,
+      client_id: state.mcpClientId!,
+      client_secret: state.mcpClientSecret!,
+    });
+    const refreshRes = await fetch(`${BASE_URL}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: refreshBody.toString(),
+    });
+    assertEq(refreshRes.status, 200, 'refresh 200');
+    const refreshed = (await refreshRes.json()) as { access_token: string };
+    assert(refreshed.access_token.length > 20, 'refreshed access_token');
+    assert(refreshed.access_token !== tokenData.access_token, 'token rotated');
+  });
+
+  await test('C-OAuth: 不正な PKCE verifier は /token で invalid_grant', async () => {
+    const crypto = await import('node:crypto');
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto
+      .createHash('sha256')
+      .update(codeVerifier)
+      .digest('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    const cookies = await loginAsSession(state.userA!.username, state.userA!.password);
+    const qs = new URLSearchParams({
+      response_type: 'code',
+      client_id: state.mcpClientId!,
+      redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      state: 's',
+    });
+    const authRes = await fetch(`${BASE_URL}/authorize?${qs.toString()}`, {
+      headers: { Cookie: cookies.join('; ') },
+      redirect: 'manual',
+    });
+    const location = authRes.headers.get('location') || '';
+    const code = new URL(location).searchParams.get('code')!;
+
+    // 間違った verifier
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+      client_id: state.mcpClientId!,
+      client_secret: state.mcpClientSecret!,
+      code_verifier: 'wrong_verifier_xxxxxxxxxxxxxxxxxxxx',
+    });
+    const tokenRes = await fetch(`${BASE_URL}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    assertEq(tokenRes.status, 400, 'PKCE failure → 400');
+    const data = (await tokenRes.json()) as { error: string };
+    assertEq(data.error, 'invalid_grant', 'invalid_grant');
+  });
+
   await test('C-5 isolation: userB の credentials では userA のデータが見えない', async () => {
     // userB 用 credentials を発行
     const cookiesB = await loginAsSession(state.userB!.username, state.userB!.password);

@@ -183,10 +183,22 @@ export default function UserSettingsPage() {
           <div style={{ fontSize: 13, marginBottom: 12, padding: 12, background: '#f5f5f5', borderRadius: 6 }}>
             {mcpStatus.hasCredentials ? (
               <>
-                <div>Client ID: <code>{mcpStatus.clientId}</code></div>
-                <div>発行日: {mcpStatus.createdAt ? new Date(mcpStatus.createdAt).toLocaleString('ja-JP') : '-'}</div>
-                <div>最終使用: {mcpStatus.lastUsedAt ? new Date(mcpStatus.lastUsedAt).toLocaleString('ja-JP') : '未使用'}</div>
-                {mcpStatus.mcpUrl && <div>MCP URL: <code>{mcpStatus.mcpUrl}</code></div>}
+                {mcpStatus.mcpUrl && (
+                  <div style={{ marginBottom: 4, wordBreak: 'break-all' }}>
+                    MCP URL: <code style={{ userSelect: 'all' }}>{mcpStatus.mcpUrl}</code>
+                  </div>
+                )}
+                <div style={{ marginBottom: 4 }}>
+                  Client ID: <code style={{ userSelect: 'all' }}>{mcpStatus.clientId}</code>
+                </div>
+                <div style={{ color: '#999', fontSize: 12 }}>
+                  Client Secret: (発行時にのみ表示。必要なら再発行してください)
+                </div>
+                <div style={{ marginTop: 6, color: '#666', fontSize: 12 }}>
+                  発行日: {mcpStatus.createdAt ? new Date(mcpStatus.createdAt).toLocaleString('ja-JP') : '-'}
+                  {' / '}
+                  最終使用: {mcpStatus.lastUsedAt ? new Date(mcpStatus.lastUsedAt).toLocaleString('ja-JP') : '未使用'}
+                </div>
               </>
             ) : (
               <div style={{ color: '#999' }}>未発行</div>
@@ -242,17 +254,56 @@ export default function UserSettingsPage() {
             <div style={{ fontWeight: 600, marginBottom: 8 }}>
               ⚠️ Client Secret は以下に表示されるものが唯一の機会です。安全な場所に保管してください。
             </div>
-            <div style={{ marginBottom: 4 }}>
-              <strong>Client ID:</strong> <code>{mcpIssued.clientId}</code>
-            </div>
-            <div style={{ marginBottom: 4, wordBreak: 'break-all' }}>
-              <strong>Client Secret:</strong> <code>{mcpIssued.clientSecret}</code>
+            <div style={{ marginBottom: 10, color: '#7a4500' }}>
+              Claude.ai の <strong>Settings → Connectors → Add custom connector</strong> で以下の3つを設定してください:
             </div>
             {mcpIssued.mcpUrl && (
-              <div style={{ marginBottom: 4 }}>
-                <strong>MCP URL:</strong> <code>{mcpIssued.mcpUrl}</code>
+              <div style={{ marginBottom: 8, wordBreak: 'break-all' }}>
+                <div style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>① Remote MCP server URL</div>
+                <code
+                  style={{
+                    display: 'block',
+                    padding: '6px 10px',
+                    background: 'white',
+                    border: '1px solid #ddd',
+                    borderRadius: 4,
+                    userSelect: 'all',
+                  }}
+                >
+                  {mcpIssued.mcpUrl}
+                </code>
               </div>
             )}
+            <div style={{ marginBottom: 8, wordBreak: 'break-all' }}>
+              <div style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>② OAuth Client ID</div>
+              <code
+                style={{
+                  display: 'block',
+                  padding: '6px 10px',
+                  background: 'white',
+                  border: '1px solid #ddd',
+                  borderRadius: 4,
+                  userSelect: 'all',
+                }}
+              >
+                {mcpIssued.clientId}
+              </code>
+            </div>
+            <div style={{ marginBottom: 8, wordBreak: 'break-all' }}>
+              <div style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>③ OAuth Client Secret</div>
+              <code
+                style={{
+                  display: 'block',
+                  padding: '6px 10px',
+                  background: 'white',
+                  border: '1px solid #ddd',
+                  borderRadius: 4,
+                  userSelect: 'all',
+                }}
+              >
+                {mcpIssued.clientSecret}
+              </code>
+            </div>
             <button
               onClick={() => setMcpIssued(null)}
               style={{ marginTop: 8, padding: '4px 12px', fontSize: 12 }}

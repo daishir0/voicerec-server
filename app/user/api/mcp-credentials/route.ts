@@ -3,6 +3,13 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { getUserSession } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { OAUTH_ISSUER } from '@/lib/oauth';
+
+function getMcpUrl(): string | null {
+  if (process.env.MCP_BASE_URL) return process.env.MCP_BASE_URL;
+  if (OAUTH_ISSUER) return `${OAUTH_ISSUER}/api/mcp`;
+  return null;
+}
 
 // GET: 現在のクレデンシャルの存在確認のみ (secret は返さない)
 export async function GET() {
@@ -26,7 +33,7 @@ export async function GET() {
     clientId: user.mcpClientId,
     createdAt: user.mcpCredentialsCreatedAt,
     lastUsedAt: user.mcpLastUsedAt,
-    mcpUrl: process.env.MCP_BASE_URL || null,
+    mcpUrl: getMcpUrl(),
   });
 }
 
@@ -54,7 +61,7 @@ export async function POST() {
   return NextResponse.json({
     clientId,
     clientSecret, // 平文は1回だけ
-    mcpUrl: process.env.MCP_BASE_URL || null,
+    mcpUrl: getMcpUrl(),
     createdAt: new Date(),
   });
 }
