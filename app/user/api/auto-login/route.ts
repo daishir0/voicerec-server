@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateAndConsume } from '@/lib/ott';
-import { sign } from '@/lib/auth';
+import { setSession } from '@/lib/auth';
+import { OAUTH_ISSUER } from '@/lib/oauth';
 
 function getBaseUrl(req: NextRequest): string {
+  if (OAUTH_ISSUER) return OAUTH_ISSUER;
   const host = req.headers.get('host') || req.nextUrl.host;
   const proto = req.headers.get('x-forwarded-proto') || req.nextUrl.protocol.replace(':', '');
   return `${proto}://${host}`;
@@ -21,16 +23,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${base}/user/login`);
   }
 
-  const data = JSON.stringify({ userId: result.userId, username: result.username, ts: Date.now() });
-  const signed = sign(Buffer.from(data).toString('base64url'));
+  // 統一 session Cookie を発行 (role='user', Cookie名='session')
+  await setSession(result.userId, result.username, 'user');
 
-  const response = NextResponse.redirect(`${base}/user/recordings`);
-  response.cookies.set('user_session', signed, {
-    httpOnly: true,
-    secure: false,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 60 * 60 * 24,
-  });
-  return response;
+  return NextResponse.redirect(`${base}/user/recordings`);
 }
