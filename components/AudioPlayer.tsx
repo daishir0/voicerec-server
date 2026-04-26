@@ -77,10 +77,8 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function Aud
     const audio = new Audio(src);
     audio.preload = 'metadata';
     audioRef.current = audio;
-    console.log('[AudioPlayer] mount', { src, recordingId });
 
     const onLoadedMeta = () => {
-      console.log('[AudioPlayer] loadedmetadata', { duration: audio.duration, readyState: audio.readyState });
       setDuration(audio.duration || 0);
       // 保存された再生位置があれば復元
       if (storageKeyTime) {
@@ -89,7 +87,6 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function Aud
           if (saved) {
             const t = parseFloat(saved);
             if (isFinite(t) && t > 0 && t < (audio.duration || 0) - 1) {
-              console.log('[AudioPlayer] restoring localStorage position', t);
               audio.currentTime = t;
               setCurrentTime(t);
             }
@@ -124,20 +121,12 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function Aud
         }
       }
     };
-    const onPlay = () => {
-      console.log('[AudioPlayer] play event', { currentTime: audio.currentTime });
-      setPlaying(true);
-    };
+    const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
-    const onErr = (e: Event) => {
-      console.error('[AudioPlayer] audio error', e, audio.error);
+    // ネットワーク・コーデック等の予期せぬエラーは可視化したいので残す
+    const onErr = () => {
+      console.error('[AudioPlayer] audio error', audio.error);
       setPlaying(false);
-    };
-    const onSeeking = () => {
-      console.log('[AudioPlayer] seeking event', { currentTime: audio.currentTime, readyState: audio.readyState });
-    };
-    const onSeeked = () => {
-      console.log('[AudioPlayer] seeked event', { currentTime: audio.currentTime, readyState: audio.readyState });
     };
 
     audio.addEventListener('loadedmetadata', onLoadedMeta);
@@ -146,8 +135,6 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function Aud
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
     audio.addEventListener('error', onErr);
-    audio.addEventListener('seeking', onSeeking);
-    audio.addEventListener('seeked', onSeeked);
 
     return () => {
       audio.removeEventListener('loadedmetadata', onLoadedMeta);
@@ -156,8 +143,6 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function Aud
       audio.removeEventListener('play', onPlay);
       audio.removeEventListener('pause', onPause);
       audio.removeEventListener('error', onErr);
-      audio.removeEventListener('seeking', onSeeking);
-      audio.removeEventListener('seeked', onSeeked);
       audio.pause();
       audio.src = '';
       audioRef.current = null;
@@ -212,30 +197,22 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function Aud
   useImperativeHandle(ref, (): AudioPlayerHandle => ({
     seek: (sec: number, play = false) => {
       const audio = audioRef.current;
-      console.log('[AudioPlayer] seek() called', { sec, play, hasAudio: !!audio, readyState: audio?.readyState, duration: audio?.duration });
       if (!audio) return;
       const safeSec = Math.max(0, sec);
       const apply = () => {
         const dur = audio.duration;
         // duration が有効な時だけ上限クランプ。NaN/0 (メタデータ未読込) の場合は安全な秒数をそのまま使用
         const target = (isFinite(dur) && dur > 0) ? Math.min(safeSec, dur) : safeSec;
-        const before = audio.currentTime;
         audio.currentTime = target;
-        const after = audio.currentTime;
-        console.log('[AudioPlayer] apply()', { target, before, afterAssign: after, duration: dur, readyState: audio.readyState });
         setCurrentTime(target);
         if (play) {
-          audio.play()
-            .then(() => console.log('[AudioPlayer] play() promise resolved', { currentTime: audio.currentTime }))
-            .catch((err) => console.error('[AudioPlayer] play() promise rejected', err));
+          audio.play().catch((err) => console.error('[AudioPlayer] play() rejected', err));
         }
       };
       // メタデータ読込前に呼ばれた場合 (audio.duration === NaN) は loadedmetadata を待つ
       if (audio.readyState >= 1 /* HAVE_METADATA */) {
-        console.log('[AudioPlayer] readyState >= 1, applying immediately');
         apply();
       } else {
-        console.log('[AudioPlayer] readyState < 1, deferring to loadedmetadata');
         audio.addEventListener('loadedmetadata', apply, { once: true });
       }
     },
