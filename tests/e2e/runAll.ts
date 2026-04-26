@@ -321,8 +321,8 @@ async function testsPhaseB() {
     // admin が recordings 一覧を取ると userA の録音が見える
     const list = await httpRaw('GET', '/admin/api/recordings', { cookies: allCookies });
     assertEq(list.status, 200, 'recordings list ok');
-    const recs = list.json() as { id: string; userId: string }[];
-    const ourRec = recs.find((r) => r.id === state.uploadedRecordingId);
+    const body = list.json() as { items: { id: string; userId: string }[]; nextCursor: string | null };
+    const ourRec = body.items.find((r) => r.id === state.uploadedRecordingId);
     assert(ourRec !== undefined, 'uploaded recording visible via impersonate');
     assertEq(ourRec!.userId, state.userA!.id, 'userId matches userA');
 

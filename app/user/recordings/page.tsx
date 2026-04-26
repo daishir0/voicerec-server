@@ -1,7 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, DragEvent, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, DragEvent } from 'react';
 import RecordingDetailPanel from '@/components/RecordingDetailPanel';
+
+const PAGE_SIZE = 50;
+const SEARCH_DEBOUNCE_MS = 300;
 
 interface Recording {
   id: string;
@@ -24,14 +27,17 @@ const ACCEPTED_EXTS = ['.mp3', '.mp4', '.m4a', '.wav', '.webm', '.ogg', '.flac',
 export default function UserRecordingsPage() {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   // 統合パネル: 1度に1録音だけ展開
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const toggleExpanded = useCallback((id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
   }, []);
 
-  // Search
+  // Search (デバウンス: タイピング中は API を叩かない)
   const [searchQuery, setSearchQuery] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
 
   // Delete state
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -44,25 +50,43 @@ export default function UserRecordingsPage() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const fetchRecordings = useCallback(async () => {
-    setLoading(true);
-    const res = await fetch('/user/api/recordings');
-    if (res.ok) setRecordings(await res.json());
-    setLoading(false);
-  }, []);
+  /** 録音一覧取得。reset=true で先頭から、false でカーソル続きを取得 */
+  const fetchRecordings = useCallback(
+    async (reset: boolean) => {
+      if (reset) setLoading(true); else setLoadingMore(true);
+      try {
+        const params = new URLSearchParams();
+        params.set('limit', String(PAGE_SIZE));
+        if (appliedSearch) params.set('search', appliedSearch);
+        if (!reset && nextCursor) params.set('before', nextCursor);
+        const res = await fetch(`/user/api/recordings?${params.toString()}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as { items: Recording[]; nextCursor: string | null };
+        setRecordings((prev) => (reset ? data.items : [...prev, ...data.items]));
+        setNextCursor(data.nextCursor);
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [appliedSearch, nextCursor]
+  );
 
-  useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
+  // 検索クエリ変更を 300ms デバウンスして appliedSearch に反映
+  useEffect(() => {
+    const t = setTimeout(() => setAppliedSearch(searchQuery.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
-  // Filtered recordings
-  const filteredRecordings = useMemo(() => {
-    if (!searchQuery.trim()) return recordings;
-    const q = searchQuery.toLowerCase();
-    return recordings.filter(r =>
-      r.displayName.toLowerCase().includes(q) ||
-      r.filename.toLowerCase().includes(q) ||
-      (r.transcriptionText && r.transcriptionText.toLowerCase().includes(q))
-    );
-  }, [recordings, searchQuery]);
+  // appliedSearch が変わったら先頭から取り直し
+  useEffect(() => {
+    setNextCursor(null);
+    setRecordings([]);
+    fetchRecordings(true);
+    // fetchRecordings は appliedSearch / nextCursor を依存に持つが、
+    // ここでは appliedSearch 変更時のみ再フェッチしたい
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliedSearch]);
 
   const isValidAudioFile = (file: File) => {
     const ext = '.' + file.name.split('.').pop()?.toLowerCase();
@@ -99,7 +123,9 @@ export default function UserRecordingsPage() {
     setUploading(false);
     setUploadProgress('');
     setShowUpload(false);
-    fetchRecordings();
+    // 先頭から取り直し（新しいレコードが先頭に来るため）
+    setNextCursor(null);
+    fetchRecordings(true);
   };
 
   const handleDrop = (e: DragEvent) => {
@@ -131,9 +157,10 @@ export default function UserRecordingsPage() {
     setDeletingId(id);
     if (expandedId === id) setExpandedId(null);
     await fetch(`/user/api/recordings/${id}`, { method: 'DELETE' });
+    // ローカルから即座に除去（再フェッチ不要、ページ位置維持）
+    setRecordings((prev) => prev.filter((r) => r.id !== id));
     setSwipedId(null);
     setDeletingId(null);
-    fetchRecordings();
   };
 
   const statusBadge = (status: string) => {
@@ -180,9 +207,9 @@ export default function UserRecordingsPage() {
       </div>
 
       {/* Search results count */}
-      {searchQuery && !loading && (
+      {appliedSearch && !loading && (
         <div style={{ fontSize: '0.85em', color: '#888', marginBottom: '12px' }}>
-          {filteredRecordings.length} / {recordings.length} recordings
+          検索: &quot;{appliedSearch}&quot; — {recordings.length} 件{nextCursor ? '+' : ''}
         </div>
       )}
 
@@ -246,7 +273,7 @@ export default function UserRecordingsPage() {
           </tr>
         </thead>
         <tbody>
-          {filteredRecordings.map((r) => (
+          {recordings.map((r) => (
             <>
               <tr key={r.id}>
                 <td>
@@ -315,10 +342,23 @@ export default function UserRecordingsPage() {
           {loading && (
             <tr><td colSpan={8} style={{ textAlign: 'center', color: '#999', padding: '2rem' }}>Loading...</td></tr>
           )}
-          {!loading && filteredRecordings.length === 0 && (
+          {!loading && recordings.length === 0 && (
             <tr><td colSpan={8} style={{ textAlign: 'center', color: '#999' }}>
-              {searchQuery ? 'No matching recordings' : 'No recordings'}
+              {appliedSearch ? 'No matching recordings' : 'No recordings'}
             </td></tr>
+          )}
+          {!loading && nextCursor && (
+            <tr>
+              <td colSpan={8} style={{ textAlign: 'center', padding: '12px' }}>
+                <button
+                  className="btn btn-sm"
+                  disabled={loadingMore}
+                  onClick={() => fetchRecordings(false)}
+                >
+                  {loadingMore ? '読み込み中...' : 'もっと読み込む'}
+                </button>
+              </td>
+            </tr>
           )}
         </tbody>
       </table>
@@ -328,12 +368,12 @@ export default function UserRecordingsPage() {
         {loading && (
           <div style={{ textAlign: 'center', color: '#999', padding: '2rem' }}>Loading...</div>
         )}
-        {!loading && filteredRecordings.length === 0 && (
+        {!loading && recordings.length === 0 && (
           <div style={{ textAlign: 'center', color: '#999', padding: '2rem' }}>
-            {searchQuery ? 'No matching recordings' : 'No recordings'}
+            {appliedSearch ? 'No matching recordings' : 'No recordings'}
           </div>
         )}
-        {filteredRecordings.map((r) => (
+        {recordings.map((r) => (
           <div key={r.id} className="recording-card-wrapper">
             <div
               className={`recording-card ${swipedId === r.id ? 'swiped' : ''}`}
@@ -403,6 +443,17 @@ export default function UserRecordingsPage() {
             )}
           </div>
         ))}
+        {!loading && nextCursor && (
+          <div style={{ textAlign: 'center', padding: '12px' }}>
+            <button
+              className="btn btn-sm"
+              disabled={loadingMore}
+              onClick={() => fetchRecordings(false)}
+            >
+              {loadingMore ? '読み込み中...' : 'もっと読み込む'}
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

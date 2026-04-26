@@ -3,6 +3,9 @@
 import { useState, useEffect, useCallback, useRef, DragEvent } from 'react';
 import RecordingDetailPanel from '@/components/RecordingDetailPanel';
 
+const PAGE_SIZE = 50;
+const SEARCH_DEBOUNCE_MS = 300;
+
 interface Recording {
   id: string;
   displayName: string;
@@ -34,11 +37,18 @@ export default function RecordingsPage() {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [filterUserId, setFilterUserId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   // 統合パネル: 1度に1録音だけ展開
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const toggleExpanded = useCallback((id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
   }, []);
+
+  // Search (デバウンス)
+  const [searchQuery, setSearchQuery] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
 
   // Upload state
   const [uploadUserId, setUploadUserId] = useState('');
@@ -47,11 +57,28 @@ export default function RecordingsPage() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const fetchRecordings = useCallback(async () => {
-    const params = filterUserId ? `?userId=${filterUserId}` : '';
-    const res = await fetch(`/admin/api/recordings${params}`);
-    if (res.ok) setRecordings(await res.json());
-  }, [filterUserId]);
+  /** 録音一覧取得。reset=true で先頭から、false でカーソル続きを取得 */
+  const fetchRecordings = useCallback(
+    async (reset: boolean) => {
+      if (reset) setLoading(true); else setLoadingMore(true);
+      try {
+        const params = new URLSearchParams();
+        params.set('limit', String(PAGE_SIZE));
+        if (filterUserId) params.set('userId', filterUserId);
+        if (appliedSearch) params.set('search', appliedSearch);
+        if (!reset && nextCursor) params.set('before', nextCursor);
+        const res = await fetch(`/admin/api/recordings?${params.toString()}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as { items: Recording[]; nextCursor: string | null };
+        setRecordings((prev) => (reset ? data.items : [...prev, ...data.items]));
+        setNextCursor(data.nextCursor);
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [filterUserId, appliedSearch, nextCursor]
+  );
 
   const fetchUsers = useCallback(async () => {
     const res = await fetch('/admin/api/users');
@@ -65,7 +92,20 @@ export default function RecordingsPage() {
   }, []);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
-  useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
+
+  // searchQuery → appliedSearch のデバウンス
+  useEffect(() => {
+    const t = setTimeout(() => setAppliedSearch(searchQuery.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  // フィルタ条件 (filterUserId / appliedSearch) 変更で先頭から取り直し
+  useEffect(() => {
+    setNextCursor(null);
+    setRecordings([]);
+    fetchRecordings(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterUserId, appliedSearch]);
 
   const isValidAudioFile = (file: File) => {
     if (ACCEPTED_TYPES.some(t => file.type.startsWith(t.split('/')[0]) || file.type === t)) return true;
@@ -108,7 +148,8 @@ export default function RecordingsPage() {
 
     setUploading(false);
     setUploadProgress('');
-    fetchRecordings();
+    setNextCursor(null);
+    fetchRecordings(true);
   };
 
   const handleDrop = (e: DragEvent) => {
@@ -126,7 +167,7 @@ export default function RecordingsPage() {
     if (!confirm('Delete this recording?')) return;
     if (expandedId === id) setExpandedId(null);
     await fetch(`/admin/api/recordings/${id}`, { method: 'DELETE' });
-    fetchRecordings();
+    setRecordings((prev) => prev.filter((r) => r.id !== id));
   };
 
   const formatSize = (bytes: number) => {
@@ -221,7 +262,7 @@ export default function RecordingsPage() {
         </div>
       </div>
 
-      <div className="filter-row">
+      <div className="filter-row" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <label>Filter by user:</label>
         <select value={filterUserId} onChange={(e) => setFilterUserId(e.target.value)}>
           <option value="">All users</option>
@@ -229,7 +270,20 @@ export default function RecordingsPage() {
             <option key={u.id} value={u.id}>{u.username}</option>
           ))}
         </select>
+        <input
+          type="text"
+          placeholder="検索 (名前・本文・ユーザー名)..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="search-input"
+          style={{ flex: 1, minWidth: 200 }}
+        />
       </div>
+      {appliedSearch && !loading && (
+        <div style={{ fontSize: '0.85em', color: '#888', marginBottom: '12px' }}>
+          検索: &quot;{appliedSearch}&quot; — {recordings.length} 件{nextCursor ? '+' : ''}
+        </div>
+      )}
       <table>
         <thead>
           <tr>
@@ -330,8 +384,26 @@ export default function RecordingsPage() {
               )}
             </>
           ))}
-          {recordings.length === 0 && (
-            <tr><td colSpan={10} style={{ textAlign: 'center', color: '#999' }}>No recordings</td></tr>
+          {loading && (
+            <tr><td colSpan={10} style={{ textAlign: 'center', color: '#999', padding: '2rem' }}>Loading...</td></tr>
+          )}
+          {!loading && recordings.length === 0 && (
+            <tr><td colSpan={10} style={{ textAlign: 'center', color: '#999' }}>
+              {appliedSearch ? 'No matching recordings' : 'No recordings'}
+            </td></tr>
+          )}
+          {!loading && nextCursor && (
+            <tr>
+              <td colSpan={10} style={{ textAlign: 'center', padding: '12px' }}>
+                <button
+                  className="btn btn-sm"
+                  disabled={loadingMore}
+                  onClick={() => fetchRecordings(false)}
+                >
+                  {loadingMore ? '読み込み中...' : 'もっと読み込む'}
+                </button>
+              </td>
+            </tr>
           )}
         </tbody>
       </table>
