@@ -54,7 +54,8 @@ npm run build && npm run start   # production
 |---|---|---|
 | `DATABASE_URL` | ✅ | PostgreSQL connection string |
 | `SESSION_SECRET` | ✅ | HMAC key for signing session cookies (`openssl rand -hex 32`) |
-| `OPENAI_API_KEY` | ✅ | Used by both gpt-4o-transcribe and whisper-1 |
+| `OPENAI_API_KEY` | ✅ | Used by whisper-1 (and gpt-4o-transcribe in dual mode) |
+| `TRANSCRIPTION_MODE` | Optional | `whisper-only` (default) / `dual` / `gpt4o-only`. Controls which model(s) the transcription pipeline uses. Restart `voicerec.service` after changing |
 | `OAUTH_ISSUER` | ✅ (for MCP) | Public base URL (e.g. `https://voicerec-server.example.com`) |
 | `MCP_BASE_URL` | Optional | Displayed on the user settings screen (defaults to `${OAUTH_ISSUER}/api/mcp`) |
 | `OAUTH_ALLOWED_REDIRECT_URIS` | Optional | Comma-separated allow-list for additional OAuth `redirect_uri` prefixes (Claude.ai's default is always allowed) |
@@ -115,9 +116,17 @@ On successful upload, the server:
 2. Parses `recordedAt` from the filename (JST)
 3. **Fires the dual transcription pipeline asynchronously**
 
-## Dual Transcription Pipeline
+## Transcription Pipeline
 
-Every recording goes through **two transcription passes** and the results are stored in **two different places**:
+The transcription pipeline is selected via the `TRANSCRIPTION_MODE` environment variable:
+
+| Mode | Behaviour |
+|---|---|
+| `whisper-only` (default) | Runs only `whisper-1` (`verbose_json`). Populates the `Segment` table for absolute-time queries, and derives `Recording.transcriptionText` / `transcriptionSegments` from the same whisper segments. **Recommended for cost / simplicity.** |
+| `dual` | Runs `gpt-4o-transcribe` for the full text, then `whisper-1` for the `Segment` table. Same as the legacy behaviour. Roughly 2× cost. |
+| `gpt4o-only` | Runs only `gpt-4o-transcribe`. Does NOT populate the `Segment` table — MCP time-range / keyword search will return empty results for these recordings. |
+
+In every mode, `Recording.transcriptionText` and `Recording.transcriptionSegments` are populated, so all UI / MCP / mobile API consumers continue to work.
 
 ### Pass 1 — gpt-4o-transcribe (high-quality full text)
 - Model: `gpt-4o-transcribe`
@@ -304,7 +313,8 @@ npm run build && npm run start   # 本番モード
 |---|---|---|
 | `DATABASE_URL` | ✅ | PostgreSQL 接続文字列 |
 | `SESSION_SECRET` | ✅ | Cookie 署名用の HMAC キー (`openssl rand -hex 32`) |
-| `OPENAI_API_KEY` | ✅ | gpt-4o-transcribe と whisper-1 の両方で使用 |
+| `OPENAI_API_KEY` | ✅ | whisper-1 (および dual モード時の gpt-4o-transcribe) で使用 |
+| `TRANSCRIPTION_MODE` | 任意 | `whisper-only` (既定) / `dual` / `gpt4o-only`。文字起こしパイプラインのモード切替。変更後は `voicerec.service` の再起動が必要 |
 | `OAUTH_ISSUER` | ✅ (MCP 使用時) | 公開ベース URL (例: `https://voicerec-server.example.com`) |
 | `MCP_BASE_URL` | 任意 | ユーザー設定画面に表示するURL (未設定時は `${OAUTH_ISSUER}/api/mcp`) |
 | `OAUTH_ALLOWED_REDIRECT_URIS` | 任意 | カンマ区切りで追加の OAuth `redirect_uri` プレフィックスを許可 (Claude.ai の既定は常に許可) |
@@ -365,9 +375,17 @@ Content-Type: application/json
 2. ファイル名から `recordedAt` を JST 解釈でパース
 3. **二重文字起こしパイプラインを非同期実行**
 
-## 二重文字起こしパイプライン
+## 文字起こしパイプライン
 
-すべての録音は **2 つの文字起こしパス** を通過し、結果は **2 つの異なる場所** に保存されます。
+文字起こしパイプラインは環境変数 `TRANSCRIPTION_MODE` で切り替えます:
+
+| モード | 挙動 |
+|---|---|
+| `whisper-only` (既定) | `whisper-1` (`verbose_json`) のみ実行。`Segment` テーブルへ発話単位で保存し、同じセグメント由来で `Recording.transcriptionText` / `transcriptionSegments` も派生保存。**コスト・シンプルさの面で推奨。** |
+| `dual` | `gpt-4o-transcribe` で全文を取得後、`whisper-1` で `Segment` テーブルを populate。旧来挙動と同等。コスト約2倍。 |
+| `gpt4o-only` | `gpt-4o-transcribe` のみ。`Segment` テーブルは書き込まない。MCP の時刻範囲・キーワード検索系は対象外となる。 |
+
+どのモードでも `Recording.transcriptionText` と `Recording.transcriptionSegments` は populate されるため、UI / MCP / モバイル API の消費者は全モードで動作します。
 
 ### パス1 — gpt-4o-transcribe (高品質な全文)
 - モデル: `gpt-4o-transcribe`

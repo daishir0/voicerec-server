@@ -15,7 +15,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'list_recordings',
     description:
-      '指定した期間内の録音のメタデータ一覧を返す。from_iso / to_iso は省略可能で、省略時は全期間。whisper-1 で処理済みかどうか (hasWhisperData) も含まれる。',
+      '指定した期間内の録音のメタデータ一覧を返す。from_iso / to_iso は省略可能で、省略時は全期間。発話単位のセグメント (Segment テーブル) が生成済みかどうか (hasWhisperData) も含まれる。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -28,7 +28,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'get_transcript_by_time',
     description:
-      '絶対時刻の範囲内にかかる発話セグメントを、録音をまたいで時系列順に返す。「昨日の15時50分から55分の発言」のような時刻ベースのクエリに使用する。from_iso と to_iso は必須。whisper-1 未処理の録音は含まれない。',
+      '絶対時刻の範囲内にかかる発話セグメントを、録音をまたいで時系列順に返す。「昨日の15時50分から55分の発言」のような時刻ベースのクエリに使用する。from_iso と to_iso は必須。Segment テーブル未生成の録音 (gpt4o-only モードで処理された録音など) は含まれない。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -42,12 +42,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'get_transcript_full',
     description:
-      '指定した録音の全文文字起こしを返す。format=gpt4o (既定・高品質テキスト) か format=whisper (時刻付きセグメント) を選択できる。',
+      '指定した録音の全文文字起こしを返す。format=text (既定。gpt4o もエイリアスとして受理) は連結テキストを、format=segments (whisper もエイリアス) は時刻付き発話セグメントを返す。',
     inputSchema: {
       type: 'object',
       properties: {
         recording_id: { type: 'string', description: '録音のID' },
-        format: { type: 'string', enum: ['gpt4o', 'whisper'], default: 'gpt4o' },
+        format: { type: 'string', enum: ['text', 'segments', 'gpt4o', 'whisper'], default: 'text' },
       },
       required: ['recording_id'],
     },
@@ -55,7 +55,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'search_transcripts',
     description:
-      'キーワードで whisper セグメントを全文検索する (大文字小文字区別なし)。期間で絞り込みも可能。',
+      'キーワードで発話単位セグメントを全文検索する (大文字小文字区別なし)。期間で絞り込みも可能。Segment テーブル未生成の録音は対象外。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -176,7 +176,9 @@ async function getTranscriptByTime(userId: string, args: Args) {
 async function getTranscriptFull(userId: string, args: Args) {
   const recordingId = asString(args.recording_id);
   if (!recordingId) throw new Error('recording_id is required');
-  const format = asString(args.format) ?? 'gpt4o';
+  const formatRaw = asString(args.format) ?? 'text';
+  // 'whisper' / 'segments' はセグメント形式、それ以外 ('text' / 'gpt4o') はテキスト形式
+  const wantsSegments = formatRaw === 'whisper' || formatRaw === 'segments';
 
   const rec = await prisma.recording.findFirst({
     where: { id: recordingId, userId },
@@ -191,7 +193,7 @@ async function getTranscriptFull(userId: string, args: Args) {
   });
   if (!rec) throw new Error('Recording not found');
 
-  if (format === 'whisper') {
+  if (wantsSegments) {
     const segments = await prisma.segment.findMany({
       where: { recordingId, userId },
       orderBy: { seq: 'asc' },
@@ -209,7 +211,7 @@ async function getTranscriptFull(userId: string, args: Args) {
       recordedAt: rec.recordedAt?.toISOString() ?? null,
       durationSec: rec.duration,
       whisperTranscribedAt: rec.whisperTranscribedAt?.toISOString() ?? null,
-      format: 'whisper',
+      format: 'segments',
       segments: segments.map((s) => ({
         seq: s.seq,
         startOffsetSec: s.startOffset,
@@ -225,7 +227,7 @@ async function getTranscriptFull(userId: string, args: Args) {
     displayName: rec.displayName,
     recordedAt: rec.recordedAt?.toISOString() ?? null,
     durationSec: rec.duration,
-    format: 'gpt4o',
+    format: 'text',
     text: rec.transcriptionText ?? '',
   };
 }

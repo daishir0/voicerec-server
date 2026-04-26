@@ -27,6 +27,9 @@ import {
   FIXTURE_JA_M4A,
   TestUser,
 } from './helpers';
+import { getTranscriptionModeSync } from '@/lib/transcription-config';
+
+const TRANSCRIPTION_MODE = getTranscriptionModeSync();
 
 // 共有状態: 1 本のアップロードから全テストが派生する
 interface SharedState {
@@ -65,7 +68,7 @@ async function teardown() {
 
 async function testsPhaseA() {
   console.log('');
-  console.log('=== Phase A: Upload + Dual Transcription ===');
+  console.log(`=== Phase A: Upload + Transcription (mode=${TRANSCRIPTION_MODE}) ===`);
 
   await test('A-schema: Segment テーブルが存在する', async () => {
     const result = (await prisma.$queryRawUnsafe<unknown[]>(
@@ -140,8 +143,8 @@ async function testsPhaseA() {
     assertEq(recordedAt.toISOString(), '2026-04-10T06:00:00.000Z', 'recordedAt JST parsed correctly');
   });
 
-  // Phase A の中核: 二重文字起こしを明示的に走らせる
-  await test('A-3: /api/recordings/[id]/transcribe で gpt-4o + whisper-1 両方が走る', async () => {
+  // Phase A の中核: 設定モードに応じた文字起こしパイプラインを走らせる
+  await test(`A-3: /api/recordings/[id]/transcribe (mode=${TRANSCRIPTION_MODE})`, async () => {
     console.log('  [  waiting for transcription... this takes ~15-30s ]');
     const res = await fetch(`${BASE_URL}/api/recordings/${state.uploadedRecordingId}/transcribe`, {
       method: 'POST',
@@ -151,16 +154,24 @@ async function testsPhaseA() {
     assertEq(res.status, 200, `transcribe status (body: ${body.slice(0, 200)})`);
     const data = JSON.parse(body) as {
       success: boolean;
+      mode?: string;
       transcription: { text: string };
       whisper: { segmentCount: number; error: string | null };
     };
     assert(data.success, 'transcribe success');
-    assert(data.transcription.text.length > 0, 'gpt-4o text present');
-    assertEq(data.whisper.error, null, 'no whisper error');
-    assert(data.whisper.segmentCount > 0, 'whisper segments created');
+    assert(data.transcription.text.length > 0, 'transcription text present');
+
+    if (TRANSCRIPTION_MODE === 'gpt4o-only') {
+      // gpt4o-only モードでは Segment テーブルへ書き込まない
+      assertEq(data.whisper.segmentCount, 0, 'no segments in gpt4o-only mode');
+    } else {
+      // whisper-only / dual: Segment テーブルが populate されている
+      assertEq(data.whisper.error, null, 'no whisper error');
+      assert(data.whisper.segmentCount > 0, 'whisper segments created');
+    }
   });
 
-  await test('A-3: DB の Recording.transcriptionText と whisperTranscribedAt が両方埋まっている', async () => {
+  await test(`A-3: DB の Recording.transcriptionText が埋まっている (mode=${TRANSCRIPTION_MODE})`, async () => {
     const rec = await prisma.recording.findUnique({
       where: { id: state.uploadedRecordingId },
       select: {
@@ -171,25 +182,29 @@ async function testsPhaseA() {
       },
     });
     assert(rec !== null, 'recording exists');
-    assert((rec!.transcriptionText ?? '').length > 0, 'gpt-4o text saved');
-    assert(rec!.whisperTranscribedAt !== null, 'whisperTranscribedAt set');
-    assertEq(rec!.whisperError, null, 'no whisper error');
+    assert((rec!.transcriptionText ?? '').length > 0, 'transcription text saved');
+    if (TRANSCRIPTION_MODE !== 'gpt4o-only') {
+      assert(rec!.whisperTranscribedAt !== null, 'whisperTranscribedAt set');
+      assertEq(rec!.whisperError, null, 'no whisper error');
+    }
     assertEq(rec!.language, 'ja', 'language is ja');
   });
 
-  await test('A-3: Segment テーブルに複数エントリ + 絶対時刻が正しく計算されている', async () => {
-    const segs = await prisma.segment.findMany({
-      where: { recordingId: state.uploadedRecordingId },
-      orderBy: { seq: 'asc' },
+  if (TRANSCRIPTION_MODE !== 'gpt4o-only') {
+    await test('A-3: Segment テーブルに複数エントリ + 絶対時刻が正しく計算されている', async () => {
+      const segs = await prisma.segment.findMany({
+        where: { recordingId: state.uploadedRecordingId },
+        orderBy: { seq: 'asc' },
+      });
+      assert(segs.length > 0, 'segments exist');
+      // 最初のセグメントは録音開始時刻 + startOffset とほぼ一致
+      const first = segs[0];
+      const expectedStartAt = new Date('2026-04-10T06:00:00.000Z').getTime() + first.startOffset * 1000;
+      const actualStartAt = first.startAt.getTime();
+      const diff = Math.abs(expectedStartAt - actualStartAt);
+      assert(diff < 10, `startAt diff < 10ms (got ${diff}ms)`);
     });
-    assert(segs.length > 0, 'segments exist');
-    // 最初のセグメントは録音開始時刻 + startOffset とほぼ一致
-    const first = segs[0];
-    const expectedStartAt = new Date('2026-04-10T06:00:00.000Z').getTime() + first.startOffset * 1000;
-    const actualStartAt = first.startAt.getTime();
-    const diff = Math.abs(expectedStartAt - actualStartAt);
-    assert(diff < 10, `startAt diff < 10ms (got ${diff}ms)`);
-  });
+  }
 
   await test('A-4: ユーザー設定で言語を en に変更できる (API)', async () => {
     const cookies = await loginAsSession(state.userA!.username, state.userA!.password);
@@ -212,26 +227,28 @@ async function testsPhaseA() {
     });
   });
 
-  await test('A-5: /user/api/recordings/[id]/segments が時刻順でセグメントを返す', async () => {
-    const cookies = await loginAsSession(state.userA!.username, state.userA!.password);
-    const res = await httpRaw('GET', `/user/api/recordings/${state.uploadedRecordingId}/segments`, {
-      cookies,
+  if (TRANSCRIPTION_MODE !== 'gpt4o-only') {
+    await test('A-5: /user/api/recordings/[id]/segments が時刻順でセグメントを返す', async () => {
+      const cookies = await loginAsSession(state.userA!.username, state.userA!.password);
+      const res = await httpRaw('GET', `/user/api/recordings/${state.uploadedRecordingId}/segments`, {
+        cookies,
+      });
+      assertEq(res.status, 200, 'segments endpoint ok');
+      const data = res.json() as {
+        whisperTranscribedAt: string;
+        segments: { seq: number; startOffset: number; text: string }[];
+      };
+      assert(data.whisperTranscribedAt !== null, 'whisperTranscribedAt in response');
+      assert(data.segments.length > 0, 'segments returned');
+      // 時刻順
+      for (let i = 1; i < data.segments.length; i++) {
+        assert(
+          data.segments[i].startOffset >= data.segments[i - 1].startOffset,
+          'segments ordered by startOffset',
+        );
+      }
     });
-    assertEq(res.status, 200, 'segments endpoint ok');
-    const data = res.json() as {
-      whisperTranscribedAt: string;
-      segments: { seq: number; startOffset: number; text: string }[];
-    };
-    assert(data.whisperTranscribedAt !== null, 'whisperTranscribedAt in response');
-    assert(data.segments.length > 0, 'segments returned');
-    // 時刻順
-    for (let i = 1; i < data.segments.length; i++) {
-      assert(
-        data.segments[i].startOffset >= data.segments[i - 1].startOffset,
-        'segments ordered by startOffset',
-      );
-    }
-  });
+  }
 }
 
 // ======= Phase B tests =======
@@ -412,24 +429,27 @@ async function testsPhaseC() {
     assert(data.count >= 1, 'at least 1 recording');
     const ours = data.recordings.find((r) => r.id === state.uploadedRecordingId);
     assert(ours !== undefined, 'uploaded recording present');
-    assertEq(ours!.hasWhisperData, true, 'whisper data available');
+    const expectedWhisperData = TRANSCRIPTION_MODE !== 'gpt4o-only';
+    assertEq(ours!.hasWhisperData, expectedWhisperData, `hasWhisperData=${expectedWhisperData}`);
   });
 
-  await test('C-5: get_transcript_by_time で時刻範囲のセグメントが返る', async () => {
-    const result = (await mcpCall(state.mcpClientId!, state.mcpClientSecret!, 'tools/call', {
-      name: 'get_transcript_by_time',
-      arguments: {
-        from_iso: '2026-04-10T05:59:00.000Z',
-        to_iso: '2026-04-10T06:01:00.000Z',
-      },
-    })) as { structuredContent: { count: number; segments: { recordingId: string }[] } };
-    const data = result.structuredContent;
-    assert(data.count > 0, 'at least 1 segment in range');
-    assert(
-      data.segments.every((s) => s.recordingId === state.uploadedRecordingId),
-      'all segments from our recording',
-    );
-  });
+  if (TRANSCRIPTION_MODE !== 'gpt4o-only') {
+    await test('C-5: get_transcript_by_time で時刻範囲のセグメントが返る', async () => {
+      const result = (await mcpCall(state.mcpClientId!, state.mcpClientSecret!, 'tools/call', {
+        name: 'get_transcript_by_time',
+        arguments: {
+          from_iso: '2026-04-10T05:59:00.000Z',
+          to_iso: '2026-04-10T06:01:00.000Z',
+        },
+      })) as { structuredContent: { count: number; segments: { recordingId: string }[] } };
+      const data = result.structuredContent;
+      assert(data.count > 0, 'at least 1 segment in range');
+      assert(
+        data.segments.every((s) => s.recordingId === state.uploadedRecordingId),
+        'all segments from our recording',
+      );
+    });
+  }
 
   await test('C-5: get_transcript_by_time で未処理の時刻範囲は空配列', async () => {
     const result = (await mcpCall(state.mcpClientId!, state.mcpClientSecret!, 'tools/call', {
@@ -442,14 +462,26 @@ async function testsPhaseC() {
     assertEq(result.structuredContent.count, 0, 'empty range');
   });
 
-  await test('C-5: get_transcript_full (whisper format) でセグメントが返る', async () => {
-    const result = (await mcpCall(state.mcpClientId!, state.mcpClientSecret!, 'tools/call', {
-      name: 'get_transcript_full',
-      arguments: { recording_id: state.uploadedRecordingId, format: 'whisper' },
-    })) as { structuredContent: { format: string; segments: unknown[] } };
-    assertEq(result.structuredContent.format, 'whisper', 'format whisper');
-    assert(result.structuredContent.segments.length > 0, 'segments present');
-  });
+  if (TRANSCRIPTION_MODE !== 'gpt4o-only') {
+    await test('C-5: get_transcript_full (segments format) でセグメントが返る', async () => {
+      const result = (await mcpCall(state.mcpClientId!, state.mcpClientSecret!, 'tools/call', {
+        name: 'get_transcript_full',
+        arguments: { recording_id: state.uploadedRecordingId, format: 'segments' },
+      })) as { structuredContent: { format: string; segments: unknown[] } };
+      assertEq(result.structuredContent.format, 'segments', 'format segments');
+      assert(result.structuredContent.segments.length > 0, 'segments present');
+    });
+
+    await test('C-5: get_transcript_full (whisper alias) も後方互換で動作', async () => {
+      const result = (await mcpCall(state.mcpClientId!, state.mcpClientSecret!, 'tools/call', {
+        name: 'get_transcript_full',
+        arguments: { recording_id: state.uploadedRecordingId, format: 'whisper' },
+      })) as { structuredContent: { format: string; segments: unknown[] } };
+      // 旧 'whisper' エイリアスでも segments が返る（responseの format は新名 'segments'）
+      assertEq(result.structuredContent.format, 'segments', 'whisper alias maps to segments');
+      assert(result.structuredContent.segments.length > 0, 'segments present');
+    });
+  }
 
   await test('C-5: search_transcripts で部分マッチ検索ができる', async () => {
     // 音声テキストに含まれる語 (テストスクリプトで "会議" を含むよう生成済み)

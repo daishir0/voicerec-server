@@ -131,7 +131,7 @@ export default function UserSettingsPage() {
       <section style={{ marginBottom: 32 }}>
         <h2 style={{ fontSize: 16, marginBottom: 12 }}>文字起こし言語</h2>
         <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
-          新規アップロードされた録音はこの言語で文字起こしされます (gpt-4o / whisper-1 共通)。
+          新規アップロードされた録音はこの言語で文字起こしされます。
         </p>
         <select
           value={language}
