@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, DragEvent, useMemo } from 'react';
-import AudioPlayer from '@/components/AudioPlayer';
+import RecordingDetailPanel from '@/components/RecordingDetailPanel';
 
 interface Recording {
   id: string;
@@ -19,52 +19,16 @@ interface Recording {
   whisperError: string | null;
 }
 
-interface WhisperSegment {
-  seq: number;
-  startOffset: number;
-  endOffset: number;
-  startAt: string;
-  endAt: string;
-  text: string;
-}
-
-function formatOffset(sec: number): string {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = Math.floor(sec % 60);
-  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
 const ACCEPTED_EXTS = ['.mp3', '.mp4', '.m4a', '.wav', '.webm', '.ogg', '.flac', '.mpeg', '.mpga', '.aac'];
 
 export default function UserRecordingsPage() {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedPlayId, setExpandedPlayId] = useState<string | null>(null);
-  const [expandedTextId, setExpandedTextId] = useState<string | null>(null);
-  const [expandedSegmentsId, setExpandedSegmentsId] = useState<string | null>(null);
-  const [segmentsCache, setSegmentsCache] = useState<Record<string, WhisperSegment[] | { error: string }>>({});
-
-  const loadSegments = useCallback(async (id: string) => {
-    if (segmentsCache[id]) return;
-    const res = await fetch(`/user/api/recordings/${id}/segments`);
-    if (!res.ok) {
-      setSegmentsCache((prev) => ({ ...prev, [id]: { error: `HTTP ${res.status}` } }));
-      return;
-    }
-    const data = await res.json();
-    setSegmentsCache((prev) => ({ ...prev, [id]: data.segments }));
-  }, [segmentsCache]);
-
-  const toggleSegments = useCallback((id: string) => {
-    if (expandedSegmentsId === id) {
-      setExpandedSegmentsId(null);
-    } else {
-      setExpandedSegmentsId(id);
-      loadSegments(id);
-    }
-  }, [expandedSegmentsId, loadSegments]);
+  // 統合パネル: 1度に1録音だけ展開
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedId((prev) => (prev === id ? null : id));
+  }, []);
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -165,7 +129,7 @@ export default function UserRecordingsPage() {
 
   const handleDelete = async (id: string) => {
     setDeletingId(id);
-    if (expandedPlayId === id) setExpandedPlayId(null);
+    if (expandedId === id) setExpandedId(null);
     await fetch(`/user/api/recordings/${id}`, { method: 'DELETE' });
     setSwipedId(null);
     setDeletingId(null);
@@ -287,11 +251,12 @@ export default function UserRecordingsPage() {
               <tr key={r.id}>
                 <td>
                   <button
-                    className={`btn btn-sm ${expandedPlayId === r.id ? 'btn-warning' : 'btn-primary'}`}
-                    onClick={() => setExpandedPlayId(expandedPlayId === r.id ? null : r.id)}
-                    title={expandedPlayId === r.id ? 'Close' : 'Play'}
+                    className={`btn btn-sm ${expandedId === r.id ? 'btn-warning' : 'btn-primary'}`}
+                    onClick={() => toggleExpanded(r.id)}
+                    title={expandedId === r.id ? '閉じる' : '開く'}
+                    aria-expanded={expandedId === r.id}
                   >
-                    {expandedPlayId === r.id ? '⏹' : '▶'}
+                    {expandedId === r.id ? '✕' : '▶'}
                   </button>
                 </td>
                 <td>
@@ -303,25 +268,19 @@ export default function UserRecordingsPage() {
                 <td>{statusBadge(r.transcriptionStatus)}</td>
                 <td>
                   {r.transcriptionStatus === 'completed' && r.transcriptionText ? (
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <button
-                        className="btn btn-sm btn-primary"
-                        onClick={() => setExpandedTextId(expandedTextId === r.id ? null : r.id)}
-                      >
-                        {expandedTextId === r.id ? 'Hide' : 'GPT-4o'}
-                      </button>
-                      <button
-                        className="btn btn-sm"
-                        style={{
-                          background: r.whisperTranscribedAt ? '#5856d6' : '#999',
-                          color: 'white',
-                        }}
-                        onClick={() => toggleSegments(r.id)}
-                        title={r.whisperTranscribedAt ? 'Whisperセグメント表示' : 'Whisper未処理'}
-                      >
-                        {expandedSegmentsId === r.id ? 'Hide' : 'Whisper'}
-                      </button>
-                    </div>
+                    <span
+                      title={r.whisperTranscribedAt ? 'セグメント生成済み' : (r.whisperError ?? 'セグメント未処理')}
+                      style={{
+                        display: 'inline-block',
+                        padding: '2px 8px',
+                        borderRadius: 12,
+                        background: r.whisperTranscribedAt ? '#e7f1ff' : '#f0f0f0',
+                        color: r.whisperTranscribedAt ? '#1c5dc4' : '#666',
+                        fontSize: '0.75em',
+                      }}
+                    >
+                      {r.whisperTranscribedAt ? '✓ セグメント' : '— 未処理'}
+                    </span>
                   ) : (
                     <span style={{ color: '#999', fontSize: '0.85em' }}>-</span>
                   )}
@@ -337,49 +296,17 @@ export default function UserRecordingsPage() {
                   </button>
                 </td>
               </tr>
-              {expandedPlayId === r.id && (
-                <tr key={r.id + '-player'}>
-                  <td colSpan={8} style={{ padding: '8px 16px' }}>
-                    <AudioPlayer src={`/user/api/recordings/${r.id}`} />
-                  </td>
-                </tr>
-              )}
-              {expandedTextId === r.id && r.transcriptionText && (
-                <tr key={r.id + '-text'}>
-                  <td colSpan={8} style={{ background: '#f9f9f9', padding: '1rem', whiteSpace: 'pre-wrap', fontSize: '0.9em' }}>
-                    {r.transcriptionText}
-                  </td>
-                </tr>
-              )}
-              {expandedSegmentsId === r.id && (
-                <tr key={r.id + '-segments'}>
-                  <td colSpan={8} style={{ background: '#f0f7ff', padding: '1rem', fontSize: '0.85em' }}>
-                    {(() => {
-                      const cached = segmentsCache[r.id];
-                      if (!cached) return <div style={{ color: '#999' }}>Loading whisper segments...</div>;
-                      if ('error' in cached) return <div style={{ color: '#ff3b30' }}>Error: {cached.error}</div>;
-                      if (cached.length === 0) {
-                        return (
-                          <div style={{ color: '#999' }}>
-                            {r.whisperTranscribedAt
-                              ? 'No segments (empty audio?)'
-                              : `Whisper未処理${r.whisperError ? ` (Error: ${r.whisperError})` : ''}`}
-                          </div>
-                        );
-                      }
-                      return (
-                        <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-                          {cached.map((s) => (
-                            <div key={s.seq} style={{ marginBottom: 4, fontFamily: 'monospace' }}>
-                              <span style={{ color: '#0070f3', marginRight: 8 }}>
-                                [{formatOffset(s.startOffset)}-{formatOffset(s.endOffset)}]
-                              </span>
-                              {s.text}
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
+              {expandedId === r.id && (
+                <tr key={r.id + '-detail'}>
+                  <td colSpan={8} style={{ padding: '4px 16px 12px', background: '#f9fafb' }}>
+                    <RecordingDetailPanel
+                      recordingId={r.id}
+                      audioSrc={`/user/api/recordings/${r.id}`}
+                      downloadName={r.originalName || r.filename}
+                      transcriptionText={r.transcriptionText}
+                      segmentsUrl={r.whisperTranscribedAt ? `/user/api/recordings/${r.id}/segments` : null}
+                      whisperUnavailableHint={r.whisperError ? `セグメント未処理 (Error: ${r.whisperError})` : 'セグメント未処理'}
+                    />
                   </td>
                 </tr>
               )}
@@ -414,10 +341,11 @@ export default function UserRecordingsPage() {
             >
               <div className="recording-card-header">
                 <button
-                  className={`btn btn-sm ${expandedPlayId === r.id ? 'btn-warning' : 'btn-primary'}`}
-                  onClick={() => setExpandedPlayId(expandedPlayId === r.id ? null : r.id)}
+                  className={`btn btn-sm ${expandedId === r.id ? 'btn-warning' : 'btn-primary'}`}
+                  onClick={() => toggleExpanded(r.id)}
+                  aria-expanded={expandedId === r.id}
                 >
-                  {expandedPlayId === r.id ? '⏹' : '▶'}
+                  {expandedId === r.id ? '✕' : '▶'}
                 </button>
                 <div className="recording-card-title">
                   <div style={{ fontWeight: 600 }}>{r.displayName}</div>
@@ -435,33 +363,31 @@ export default function UserRecordingsPage() {
                 </div>
               </div>
 
-              {/* Inline Audio Player */}
-              {expandedPlayId === r.id && (
-                <div style={{ marginTop: '8px' }}>
-                  <AudioPlayer src={`/user/api/recordings/${r.id}`} />
-                </div>
-              )}
-
               <div className="recording-card-meta">
                 <span>{formatSize(r.fileSize)}</span>
                 <span>{formatDuration(r.duration)}</span>
                 <span>{new Date(r.createdAt).toLocaleDateString()}</span>
               </div>
-              {r.transcriptionStatus === 'completed' && r.transcriptionText && (
-                <>
-                  <button
-                    className="btn btn-sm btn-primary"
-                    style={{ marginTop: '8px' }}
-                    onClick={() => setExpandedTextId(expandedTextId === r.id ? null : r.id)}
-                  >
-                    {expandedTextId === r.id ? 'Hide Transcription' : 'Show Transcription'}
-                  </button>
-                  {expandedTextId === r.id && (
-                    <div className="recording-card-transcription">
-                      {r.transcriptionText}
-                    </div>
-                  )}
-                </>
+
+              {expandedId === r.id && r.transcriptionStatus === 'completed' && (
+                <RecordingDetailPanel
+                  recordingId={r.id}
+                  audioSrc={`/user/api/recordings/${r.id}`}
+                  downloadName={r.originalName || r.filename}
+                  transcriptionText={r.transcriptionText}
+                  segmentsUrl={r.whisperTranscribedAt ? `/user/api/recordings/${r.id}/segments` : null}
+                  whisperUnavailableHint={r.whisperError ? `セグメント未処理 (Error: ${r.whisperError})` : 'セグメント未処理'}
+                />
+              )}
+              {expandedId === r.id && r.transcriptionStatus !== 'completed' && (
+                <RecordingDetailPanel
+                  recordingId={r.id}
+                  audioSrc={`/user/api/recordings/${r.id}`}
+                  downloadName={r.originalName || r.filename}
+                  transcriptionText={null}
+                  segmentsUrl={null}
+                  whisperUnavailableHint="文字起こし処理中または未完了"
+                />
               )}
             </div>
             {swipedId === r.id && (
