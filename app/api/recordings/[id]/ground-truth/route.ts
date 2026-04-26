@@ -90,7 +90,7 @@ export async function POST(
     const err = error as Error;
     console.error('[GroundTruth POST Error]', err?.message);
     return NextResponse.json(
-      { error: 'Internal server error', message: err?.message },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
@@ -164,7 +164,7 @@ export async function GET(
     const err = error as Error;
     console.error('[GroundTruth GET Error]', err?.message);
     return NextResponse.json(
-      { error: 'Internal server error', message: err?.message },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }

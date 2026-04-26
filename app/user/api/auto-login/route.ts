@@ -15,16 +15,16 @@ export async function GET(req: NextRequest) {
   const base = getBaseUrl(req);
 
   if (!token) {
-    return NextResponse.redirect(`${base}/user/login`);
+    return NextResponse.redirect(`${base}/login`);
   }
 
   const result = validateAndConsume(token);
   if (!result) {
-    return NextResponse.redirect(`${base}/user/login`);
+    return NextResponse.redirect(`${base}/login`);
   }
 
   // 統一 session Cookie を発行 (role='user', Cookie名='session')
   await setSession(result.userId, result.username, 'user');
 
-  return NextResponse.redirect(`${base}/user/recordings`);
+  return NextResponse.redirect(`${base}/recordings`);
 }

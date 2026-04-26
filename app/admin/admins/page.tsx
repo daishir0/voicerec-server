@@ -15,7 +15,7 @@ export default function AdminsPage() {
   const [newPassword, setNewPassword] = useState('');
 
   const fetchAdmins = useCallback(async () => {
-    const res = await fetch('/admin/api/admins');
+    const res = await fetch('/api/admin/admins');
     if (res.ok) setAdmins(await res.json());
   }, []);
 
@@ -23,7 +23,7 @@ export default function AdminsPage() {
 
   const handleCreate = async () => {
     if (!newUsername || !newPassword) return;
-    await fetch('/admin/api/admins', {
+    await fetch('/api/admin/admins', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: newUsername, password: newPassword }),
@@ -35,7 +35,7 @@ export default function AdminsPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this admin?')) return;
-    await fetch(`/admin/api/admins/${id}`, { method: 'DELETE' });
+    await fetch(`/api/admin/admins/${id}`, { method: 'DELETE' });
     fetchAdmins();
   };
 

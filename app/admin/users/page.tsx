@@ -29,7 +29,7 @@ export default function UsersPage() {
   const [newPassword, setNewPassword] = useState('');
 
   const fetchUsers = useCallback(async () => {
-    const res = await fetch('/admin/api/users');
+    const res = await fetch('/api/admin/users');
     if (res.ok) setUsers(await res.json());
   }, []);
 
@@ -37,7 +37,7 @@ export default function UsersPage() {
 
   const handleCreate = async () => {
     if (!newUsername || !newPassword) return;
-    await fetch('/admin/api/users', {
+    await fetch('/api/admin/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: newUsername, password: newPassword }),
@@ -49,12 +49,12 @@ export default function UsersPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this user and all their recordings?')) return;
-    await fetch(`/admin/api/users/${id}`, { method: 'DELETE' });
+    await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
     fetchUsers();
   };
 
   const handleLanguageChange = async (id: string, transcriptionLanguage: string) => {
-    await fetch(`/admin/api/users/${id}`, {
+    await fetch(`/api/admin/users/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ transcriptionLanguage }),

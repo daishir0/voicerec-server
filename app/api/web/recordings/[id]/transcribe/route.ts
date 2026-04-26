@@ -1,32 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateBearer } from '@/lib/bearer-auth';
+import { getSession } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { runTranscription } from '@/lib/transcribe-pipeline';
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const user = await authenticateBearer(req);
-  if (!user) {
+/**
+ * 録音を再文字起こしする（admin only）。
+ * モバイルの /api/recordings/[id]/transcribe は Bearer 認証で別系統。
+ */
+export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getSession();
+  if (!session || session.role !== 'admin') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const recording = await prisma.recording.findUnique({
-    where: { id: params.id },
-  });
-
+  const recording = await prisma.recording.findUnique({ where: { id: params.id } });
   if (!recording) {
     return NextResponse.json({ error: 'Recording not found' }, { status: 404 });
   }
 
-  if (recording.userId !== user.id) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
   try {
     const result = await runTranscription(params.id);
-
     return NextResponse.json({
       success: true,
       mode: result.mode,
@@ -42,7 +35,7 @@ export async function POST(
       },
     });
   } catch (err) {
-    console.error('[/api/recordings/[id]/transcribe] error', err);
+    console.error('[/api/web/recordings/[id]/transcribe] error', err);
     return NextResponse.json({ success: false, error: 'Transcription failed' }, { status: 500 });
   }
 }

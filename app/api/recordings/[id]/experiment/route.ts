@@ -252,7 +252,7 @@ export async function POST(
     const err = error as Error;
     console.error('[Experiment API Error]', err?.message, err?.stack);
     return NextResponse.json(
-      { error: 'Internal server error', message: err?.message },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }

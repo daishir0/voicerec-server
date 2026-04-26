@@ -76,38 +76,78 @@ async function parseSessionCookie(cookieValue: string | undefined): Promise<MwSe
   }
 }
 
+/**
+ * 旧 URL → 新 URL への永続リダイレクト (308 = メソッド維持)。
+ * モバイルが叩く /user/api/auto-login だけは中身が変わったので残置（リダイレクトしない）。
+ */
+const LEGACY_REDIRECTS: Record<string, string> = {
+  '/user/login': '/login',
+  '/admin/login': '/login',
+  '/user/recordings': '/recordings',
+  '/admin/recordings': '/recordings',
+  '/user/settings': '/settings',
+};
+
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
 
-  // Public pages: login endpoints
-  const isLoginPath =
-    pathname.startsWith('/admin/login') ||
-    pathname.startsWith('/admin/api/login') ||
-    pathname.startsWith('/user/login') ||
-    pathname.startsWith('/user/api/login') ||
-    pathname.startsWith('/user/api/auto-login');
+  // 旧 URL の永続リダイレクト
+  const target = LEGACY_REDIRECTS[pathname];
+  if (target) {
+    const url = request.nextUrl.clone();
+    url.pathname = target;
+    return NextResponse.redirect(url, { status: 308 });
+  }
 
-  if (isLoginPath) {
+  // Public pages: login + auto-login
+  const isPublic =
+    pathname === '/login' ||
+    pathname.startsWith('/api/session/login') ||
+    pathname.startsWith('/user/api/auto-login') ||
+    // OAuth エンドポイントは内部で session 検査するので middleware では通す
+    pathname.startsWith('/.well-known/') ||
+    pathname.startsWith('/authorize') ||
+    pathname.startsWith('/token');
+
+  if (isPublic) {
+    return NextResponse.next();
+  }
+
+  // 認証必須ゾーン: /recordings, /settings, /admin, /api/session/{logout,me}, /api/web/*, /api/admin/*
+  const requiresSession =
+    pathname === '/recordings' ||
+    pathname === '/settings' ||
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/api/session/me') ||
+    pathname.startsWith('/api/session/logout') ||
+    pathname.startsWith('/api/web/') ||
+    pathname.startsWith('/api/admin/');
+
+  if (!requiresSession) {
     return NextResponse.next();
   }
 
   const sessionCookie = request.cookies.get('session')?.value;
   const session = await parseSessionCookie(sessionCookie);
 
-  // Admin area: require admin role
-  if (pathname.startsWith('/admin')) {
-    if (!session) {
-      return NextResponse.redirect(new URL('/admin/login', request.url));
+  if (!session) {
+    // ページなら /login にリダイレクト、API なら 401
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
-    if (session.role !== 'admin') {
-      return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = '/login';
+    loginUrl.search = '';
+    if (pathname !== '/login') {
+      loginUrl.searchParams.set('next', pathname + search);
     }
+    return NextResponse.redirect(loginUrl);
   }
 
-  // User area: any authenticated session
-  if (pathname.startsWith('/user')) {
-    if (!session) {
-      return NextResponse.redirect(new URL('/user/login', request.url));
+  // /admin/* は admin role 必須
+  if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin/')) {
+    if (session.role !== 'admin') {
+      return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
     }
   }
 
@@ -115,5 +155,16 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/admin/:path*', '/user/:path*'],
+  matcher: [
+    // 旧 URL リダイレクト用
+    '/user/:path*',
+    '/admin/:path*',
+    // 新 URL の認証ガード
+    '/recordings',
+    '/settings',
+    '/login',
+    '/api/session/:path*',
+    '/api/web/:path*',
+    '/api/admin/:path*',
+  ],
 };

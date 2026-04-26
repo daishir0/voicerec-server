@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
     const err = error as Error;
     console.error('[Evaluation Results GET Error]', err?.message);
     return NextResponse.json(
-      { error: 'Internal server error', message: err?.message },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }

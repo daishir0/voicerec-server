@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
     const err = error as Error;
     console.error('[Batch Experiment API Error]', err?.message, err?.stack);
     return NextResponse.json(
-      { error: 'Internal server error', message: err?.message },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }

@@ -22,7 +22,7 @@ export async function POST(req: NextRequest, { params }: { params: { domainId: s
     const err = error as Error;
     console.error('[Evolve POST Error]', err?.message);
     return NextResponse.json(
-      { error: 'Internal server error', message: err?.message },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }

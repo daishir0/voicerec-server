@@ -183,10 +183,14 @@ export function extractCookieValues(setCookies: string[]): string[] {
 
 // --- Session login helpers ---
 
-export async function loginAsSession(username: string, password: string): Promise<string[]> {
-  const res = await httpRaw('POST', '/user/api/login', {
+export async function loginAsSession(
+  username: string,
+  password: string,
+  options: { requireAdmin?: boolean } = {}
+): Promise<string[]> {
+  const res = await httpRaw('POST', '/api/session/login', {
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, ...(options.requireAdmin ? { requireAdmin: true } : {}) }),
   });
   if (res.status !== 200) throw new Error(`Login failed: ${res.status} ${res.body}`);
   return extractCookieValues(res.cookies);

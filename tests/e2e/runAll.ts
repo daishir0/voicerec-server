@@ -208,7 +208,7 @@ async function testsPhaseA() {
 
   await test('A-4: ユーザー設定で言語を en に変更できる (API)', async () => {
     const cookies = await loginAsSession(state.userA!.username, state.userA!.password);
-    const res = await httpRaw('PATCH', '/user/api/settings', {
+    const res = await httpRaw('PATCH', '/api/web/settings', {
       headers: { 'Content-Type': 'application/json' },
       cookies,
       body: JSON.stringify({ transcriptionLanguage: 'en' }),
@@ -228,9 +228,9 @@ async function testsPhaseA() {
   });
 
   if (TRANSCRIPTION_MODE !== 'gpt4o-only') {
-    await test('A-5: /user/api/recordings/[id]/segments が時刻順でセグメントを返す', async () => {
+    await test('A-5: /api/web/recordings/[id]/segments が時刻順でセグメントを返す', async () => {
       const cookies = await loginAsSession(state.userA!.username, state.userA!.password);
-      const res = await httpRaw('GET', `/user/api/recordings/${state.uploadedRecordingId}/segments`, {
+      const res = await httpRaw('GET', `/api/web/recordings/${state.uploadedRecordingId}/segments`, {
         cookies,
       });
       assertEq(res.status, 200, 'segments endpoint ok');
@@ -271,8 +271,8 @@ async function testsPhaseB() {
     assertEq(tables.length, 0, 'AdminUser table dropped');
   });
 
-  await test('B-2/3: /user/api/login で user ログイン、統一 session cookie が発行される', async () => {
-    const res = await httpRaw('POST', '/user/api/login', {
+  await test('B-2/3: /api/session/login で user ログイン、統一 session cookie が発行される', async () => {
+    const res = await httpRaw('POST', '/api/session/login', {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: state.userA!.username, password: state.userA!.password }),
     });
@@ -287,21 +287,28 @@ async function testsPhaseB() {
     );
   });
 
-  await test('B-2: /admin/api/login で admin ログイン (role=admin only)', async () => {
-    const res = await httpRaw('POST', '/admin/api/login', {
+  await test('B-2: /api/session/login で admin ログイン (requireAdmin=true)', async () => {
+    const res = await httpRaw('POST', '/api/session/login', {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         username: state.userAdmin!.username,
         password: state.userAdmin!.password,
+        requireAdmin: true,
       }),
     });
     assertEq(res.status, 200, 'admin login ok');
+    const data = res.json() as { role: string };
+    assertEq(data.role, 'admin', 'role=admin');
   });
 
-  await test('B-2: user role では /admin/api/login にログインできない', async () => {
-    const res = await httpRaw('POST', '/admin/api/login', {
+  await test('B-2: user role では requireAdmin=true でログインできない', async () => {
+    const res = await httpRaw('POST', '/api/session/login', {
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: state.userA!.username, password: state.userA!.password }),
+      body: JSON.stringify({
+        username: state.userA!.username,
+        password: state.userA!.password,
+        requireAdmin: true,
+      }),
     });
     assertEq(res.status, 401, 'non-admin rejected from admin login');
   });
@@ -310,7 +317,7 @@ async function testsPhaseB() {
     const adminCookies = await adminLogin(state.userAdmin!.username, state.userAdmin!.password);
 
     // impersonate userA
-    const imp = await httpRaw('POST', '/admin/api/impersonate', {
+    const imp = await httpRaw('POST', '/api/admin/impersonate', {
       headers: { 'Content-Type': 'application/json' },
       cookies: adminCookies,
       body: JSON.stringify({ userId: state.userA!.id }),
@@ -319,7 +326,7 @@ async function testsPhaseB() {
     const allCookies = [...adminCookies, ...extractCookieValues(imp.cookies)];
 
     // admin が recordings 一覧を取ると userA の録音が見える
-    const list = await httpRaw('GET', '/admin/api/recordings', { cookies: allCookies });
+    const list = await httpRaw('GET', '/api/web/recordings', { cookies: allCookies });
     assertEq(list.status, 200, 'recordings list ok');
     const body = list.json() as { items: { id: string; userId: string }[]; nextCursor: string | null };
     const ourRec = body.items.find((r) => r.id === state.uploadedRecordingId);
@@ -327,7 +334,7 @@ async function testsPhaseB() {
     assertEq(ourRec!.userId, state.userA!.id, 'userId matches userA');
 
     // 解除
-    await httpRaw('POST', '/admin/api/impersonate', {
+    await httpRaw('POST', '/api/admin/impersonate', {
       headers: { 'Content-Type': 'application/json' },
       cookies: adminCookies,
       body: JSON.stringify({ userId: null }),
@@ -356,9 +363,9 @@ async function testsPhaseB() {
 }
 
 async function adminLogin(username: string, password: string): Promise<string[]> {
-  const res = await httpRaw('POST', '/admin/api/login', {
+  const res = await httpRaw('POST', '/api/session/login', {
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, requireAdmin: true }),
   });
   if (res.status !== 200) throw new Error(`admin login failed: ${res.status}`);
   return extractCookieValues(res.cookies);
@@ -372,7 +379,7 @@ async function testsPhaseC() {
 
   await test('C-2: MCP クレデンシャル発行 → client_id/secret が返る', async () => {
     const cookies = await loginAsSession(state.userA!.username, state.userA!.password);
-    const res = await httpRaw('POST', '/user/api/mcp-credentials', { cookies });
+    const res = await httpRaw('POST', '/api/web/mcp-credentials', { cookies });
     assertEq(res.status, 200, 'issue ok');
     const data = res.json() as { clientId: string; clientSecret: string };
     assert(data.clientId.startsWith('voicerec-'), 'clientId format');
@@ -519,7 +526,7 @@ async function testsPhaseC() {
     assert(data.authorization_servers.length > 0, 'auth servers');
   });
 
-  await test('C-OAuth: /authorize 未ログイン時は /user/login?next=... へ 307', async () => {
+  await test('C-OAuth: /authorize 未ログイン時は /login?next=... へ 307', async () => {
     const qs = new URLSearchParams({
       response_type: 'code',
       client_id: state.mcpClientId!,
@@ -532,7 +539,7 @@ async function testsPhaseC() {
     const res = await fetch(`${BASE_URL}/authorize?${qs.toString()}`, { redirect: 'manual' });
     assertEq(res.status, 307, '307 redirect');
     const location = res.headers.get('location') || '';
-    assert(location.includes('/user/login'), 'redirected to login');
+    assert(location.includes('/login'), 'redirected to login');
     assert(location.includes('next='), 'next param present');
   });
 
@@ -688,7 +695,7 @@ async function testsPhaseC() {
   await test('C-5 isolation: userB の credentials では userA のデータが見えない', async () => {
     // userB 用 credentials を発行
     const cookiesB = await loginAsSession(state.userB!.username, state.userB!.password);
-    const issue = await httpRaw('POST', '/user/api/mcp-credentials', { cookies: cookiesB });
+    const issue = await httpRaw('POST', '/api/web/mcp-credentials', { cookies: cookiesB });
     const credB = issue.json() as { clientId: string; clientSecret: string };
 
     const result = (await mcpCall(credB.clientId, credB.clientSecret, 'tools/call', {
@@ -715,6 +722,77 @@ async function testsPhaseC() {
   });
 }
 
+// ======= Phase D: URL 統合 (legacy redirects + mobile contract) =======
+
+async function testsPhaseD() {
+  console.log('');
+  console.log('=== Phase D: URL Unification ===');
+
+  // 旧 URL の 308 リダイレクト
+  const legacyRedirects: { from: string; to: string }[] = [
+    { from: '/user/login', to: '/login' },
+    { from: '/admin/login', to: '/login' },
+    { from: '/user/recordings', to: '/recordings' },
+    { from: '/admin/recordings', to: '/recordings' },
+    { from: '/user/settings', to: '/settings' },
+  ];
+  for (const { from, to } of legacyRedirects) {
+    await test(`D-1: ${from} → 308 → ${to}`, async () => {
+      const res = await fetch(`${BASE_URL}${from}`, { redirect: 'manual' });
+      assertEq(res.status, 308, `308 redirect for ${from}`);
+      const loc = res.headers.get('location') || '';
+      assert(loc.endsWith(to) || loc.includes(`${to}?`) || loc.includes(`${to}`), `redirected to ${to} (got ${loc})`);
+    });
+  }
+
+  // モバイル契約: /user/api/auto-login は維持（リダイレクトせず内部処理のみ実行）
+  await test('D-2: /user/api/auto-login は 308 で消えていない（モバイル契約）', async () => {
+    // token 無し → /login へ 307 (auto-login route 自身のリダイレクト)
+    const res = await fetch(`${BASE_URL}/user/api/auto-login`, { redirect: 'manual' });
+    assertEq(res.status, 307, 'auto-login still alive (returns 307 redirect to /login)');
+    const loc = res.headers.get('location') || '';
+    assert(loc.includes('/login'), `auto-login redirects to /login (got ${loc})`);
+  });
+
+  // モバイル契約: /api/auth/login がそのまま動く
+  await test('D-3: /api/auth/login (モバイル Bearer) で token 発行', async () => {
+    const res = await httpRaw('POST', '/api/auth/login', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: state.userA!.username,
+        password: state.userA!.password,
+        deviceLabel: 'e2e-test-rec18082',
+      }),
+    });
+    assertEq(res.status, 200, 'mobile login ok');
+    const data = res.json() as { token?: string; userId?: string; role?: string };
+    assert(!!data.token && data.token.length > 20, 'token issued');
+    assertEq(data.role, 'user', 'role=user');
+  });
+
+  // 新ページ /login が公開されている
+  await test('D-4: /login (page) は未ログインでも 200', async () => {
+    const res = await fetch(`${BASE_URL}/login`, { redirect: 'manual' });
+    assertEq(res.status, 200, '/login accessible');
+  });
+
+  // 認証必須ページ: 未ログインで /recordings → /login にリダイレクト
+  await test('D-5: /recordings 未ログイン → /login?next=/recordings へリダイレクト', async () => {
+    const res = await fetch(`${BASE_URL}/recordings`, { redirect: 'manual' });
+    assert(res.status === 307 || res.status === 308, `redirect (got ${res.status})`);
+    const loc = res.headers.get('location') || '';
+    assert(loc.includes('/login'), `redirected to /login (got ${loc})`);
+    assert(loc.includes('next='), 'next param present');
+  });
+
+  // /api/admin/* は user role では 403
+  await test('D-6: user role が /api/admin/users にアクセス → 403', async () => {
+    const cookies = await loginAsSession(state.userA!.username, state.userA!.password);
+    const res = await httpRaw('GET', '/api/admin/users', { cookies });
+    assertEq(res.status, 403, 'forbidden for user role');
+  });
+}
+
 // ======= MAIN =======
 
 async function main() {
@@ -723,6 +801,7 @@ async function main() {
     await testsPhaseA();
     await testsPhaseB();
     await testsPhaseC();
+    await testsPhaseD();
   } finally {
     await teardown();
   }

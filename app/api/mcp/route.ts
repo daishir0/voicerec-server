@@ -142,8 +142,8 @@ export async function POST(req: NextRequest) {
         });
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Internal error';
-    return NextResponse.json(rpcError(id, -32603, msg), { status: 500 });
+    console.error('[/api/mcp] error', err);
+    return NextResponse.json(rpcError(id, -32603, 'Internal error'), { status: 500 });
   }
 }
 

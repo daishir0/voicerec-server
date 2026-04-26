@@ -9,6 +9,10 @@ const SECRET = process.env.SESSION_SECRET;
 const SESSION_COOKIE = 'session';
 const IMPERSONATE_COOKIE = 'impersonated_user_id';
 
+// 本番では HTTPS のみで cookie を送信。next start (NODE_ENV=production) を想定。
+// 開発時 (npm run dev) は localhost HTTP でも動くよう false。
+const SECURE_COOKIE = process.env.NODE_ENV === 'production';
+
 export function sign(value: string): string {
   const hmac = crypto.createHmac('sha256', SECRET);
   hmac.update(value);
@@ -38,7 +42,7 @@ export async function setSession(userId: string, username: string, role: 'user' 
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, signed, {
     httpOnly: true,
-    secure: false,
+    secure: SECURE_COOKIE,
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 24,
@@ -77,7 +81,7 @@ export async function setImpersonatedUserId(userId: string | null) {
   } else {
     cookieStore.set(IMPERSONATE_COOKIE, userId, {
       httpOnly: true,
-      secure: false,
+      secure: SECURE_COOKIE,
       sameSite: 'lax',
       path: '/',
       maxAge: 60 * 60 * 24,
@@ -104,32 +108,3 @@ export async function getEffectiveUserId(session: Session): Promise<string> {
   return session.userId;
 }
 
-// --- Back-compat aliases (既存コードを壊さないため) ---
-
-export async function setAdminSession(adminId: string, username: string) {
-  await setSession(adminId, username, 'admin');
-}
-
-export async function getAdminSession(): Promise<{ adminId: string; username: string } | null> {
-  const s = await getSession();
-  if (!s || s.role !== 'admin') return null;
-  return { adminId: s.userId, username: s.username };
-}
-
-export async function clearAdminSession() {
-  await clearSession();
-}
-
-export async function setUserSession(userId: string, username: string, role: 'user' | 'admin' = 'user') {
-  await setSession(userId, username, role);
-}
-
-export async function getUserSession(): Promise<{ userId: string; username: string; role?: 'user' | 'admin' } | null> {
-  const s = await getSession();
-  if (!s) return null;
-  return { userId: s.userId, username: s.username, role: s.role };
-}
-
-export async function clearUserSession() {
-  await clearSession();
-}

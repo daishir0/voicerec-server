@@ -33,8 +33,12 @@ export default function MinutesPage() {
   const [loading, setLoading] = useState(false);
 
   const fetchRecordings = useCallback(async () => {
-    const res = await fetch('/admin/api/recordings');
-    if (res.ok) setRecordings(await res.json());
+    // 議事録ページは録音件数が多くないユースケースを想定し、上限を 200 に
+    const res = await fetch('/api/web/recordings?limit=200');
+    if (res.ok) {
+      const data = (await res.json()) as { items: Recording[] };
+      setRecordings(data.items);
+    }
   }, []);
 
   useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
@@ -44,7 +48,7 @@ export default function MinutesPage() {
       prev.map((r) => r.id === id ? { ...r, transcriptionStatus: 'processing' } : r)
     );
     setLoading(true);
-    await fetch(`/admin/api/recordings/${id}/transcribe`, { method: 'POST' });
+    await fetch(`/api/web/recordings/${id}/transcribe`, { method: 'POST' });
     await fetchRecordings();
     setLoading(false);
   };

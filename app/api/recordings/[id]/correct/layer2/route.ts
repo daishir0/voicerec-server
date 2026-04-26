@@ -162,7 +162,7 @@ export async function POST(
   } catch (error: any) {
     console.error('[Layer2 API Error]', error?.message, error?.stack);
     return NextResponse.json(
-      { error: 'Internal server error', message: error?.message },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
@@ -233,7 +233,7 @@ export async function GET(
   } catch (error: any) {
     console.error('[Layer2 GET Error]', error?.message);
     return NextResponse.json(
-      { error: 'Internal server error', message: error?.message },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }

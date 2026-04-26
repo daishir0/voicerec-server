@@ -22,7 +22,7 @@ import {
  *   scope=mcp (オプション)
  *
  * 動作:
- *   1. session cookie がなければ /user/login?next=<このURL> にリダイレクト
+ *   1. session cookie がなければ /login?next=<このURL> にリダイレクト
  *   2. ログイン中のユーザーが client_id の所有者と一致しなければエラー
  *   3. 認可コードを発行して redirect_uri に code+state でリダイレクト
  */
@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
     // OAUTH_ISSUER を base にして公開URLにする (Apache proxy 経由でも安定)
     const fullPath = url.pathname + url.search;
     const base = OAUTH_ISSUER || `${url.protocol}//${url.host}`;
-    const loginUrl = new URL('/user/login', base);
+    const loginUrl = new URL('/login', base);
     loginUrl.searchParams.set('next', fullPath);
     return NextResponse.redirect(loginUrl);
   }
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
     await clearSession();
     const fullPath = url.pathname + url.search;
     const base = OAUTH_ISSUER || `${url.protocol}//${url.host}`;
-    const loginUrl = new URL('/user/login', base);
+    const loginUrl = new URL('/login', base);
     loginUrl.searchParams.set('next', fullPath);
     loginUrl.searchParams.set(
       'hint',

@@ -41,10 +41,12 @@ export default function MinutesDetailPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const fetchRecording = useCallback(async () => {
-    const res = await fetch('/admin/api/recordings');
+    // 単一録音だけ取れれば良いため limit=1 + cursor で省コスト化したいが、
+    // 既存実装互換のため一覧から検索（上限 200）。
+    const res = await fetch('/api/web/recordings?limit=200');
     if (!res.ok) return;
-    const all: RecordingDetail[] = await res.json();
-    const found = all.find((r) => r.id === id);
+    const data = (await res.json()) as { items: RecordingDetail[] };
+    const found = data.items.find((r) => r.id === id);
     if (!found) return;
     setRecording(found);
     if (found.transcriptionSegments) {
@@ -74,7 +76,7 @@ export default function MinutesDetailPage() {
       setPlaying(false);
       return;
     }
-    const audio = new Audio(`/admin/api/recordings/${id}`);
+    const audio = new Audio(`/api/web/recordings/${id}`);
     audio.onended = () => { setPlaying(false); audioRef.current = null; };
     audio.onerror = () => { setPlaying(false); audioRef.current = null; alert('再生エラー'); };
     audio.play();
@@ -86,7 +88,7 @@ export default function MinutesDetailPage() {
     if (!confirm('文字起こしを再実行しますか？')) return;
     setTranscribing(true);
     setRecording((prev) => prev ? { ...prev, transcriptionStatus: 'processing' } : prev);
-    await fetch(`/admin/api/recordings/${id}/transcribe`, { method: 'POST' });
+    await fetch(`/api/web/recordings/${id}/transcribe`, { method: 'POST' });
     await fetchRecording();
     setTranscribing(false);
   };

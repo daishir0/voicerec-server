@@ -96,7 +96,7 @@ export async function POST(
   } catch (error: any) {
     console.error('[Layer1 API Error]', error?.message, error?.stack);
     return NextResponse.json(
-      { error: 'Internal server error', message: error?.message },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
