@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAdminSession } from '@/lib/auth';
+import { serveAudioWithRange } from '@/lib/serve-audio';
 import fs from 'fs/promises';
 import path from 'path';
 
-// GET: ファイル配信（再生用）
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+// GET: ファイル配信（再生用）。Range リクエスト対応で seek 可能。
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getAdminSession();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -15,19 +16,15 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const filePath = path.join(process.cwd(), recording.filePath);
-  try {
-    const fileBuffer = await fs.readFile(filePath);
-    return new NextResponse(fileBuffer, {
-      headers: {
-        'Content-Type': recording.mimeType || 'audio/mp4',
-        'Content-Length': String(fileBuffer.length),
-        'Content-Disposition': `inline; filename="${recording.filename}"`,
-      },
-    });
-  } catch {
-    return NextResponse.json({ error: 'File not found' }, { status: 404 });
-  }
+  const filePath = path.isAbsolute(recording.filePath)
+    ? recording.filePath
+    : path.join(process.cwd(), recording.filePath);
+  return serveAudioWithRange({
+    absolutePath: filePath,
+    mimeType: recording.mimeType || 'audio/mp4',
+    filename: recording.filename,
+    rangeHeader: req.headers.get('range'),
+  });
 }
 
 // DELETE: 録音削除
