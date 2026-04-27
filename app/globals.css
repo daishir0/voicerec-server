@@ -732,10 +732,6 @@ button:disabled {
 .audio-player-v2 .audio-player-btn-skip {
   font-size: 14px;
 }
-.audio-player-v2 .audio-player-btn-download {
-  text-decoration: none;
-  font-size: 18px;
-}
 .audio-player-speed {
   background: #2a2b30;
   border: 1px solid #3a3d44;

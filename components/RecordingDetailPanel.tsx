@@ -16,8 +16,6 @@ export interface RecordingDetailPanelProps {
   recordingId: string;
   /** 音声ストリーム URL (例: /user/api/recordings/abc) */
   audioSrc: string;
-  /** ダウンロード時のファイル名 */
-  downloadName?: string;
   /** GPT-4o / 派生の全文 */
   transcriptionText: string | null;
   /** セグメント取得用 API URL (例: /user/api/recordings/abc/segments)。null ならセグメントタブ無効 */
@@ -80,7 +78,6 @@ function highlightText(text: string, query: string): React.ReactNode {
 export default function RecordingDetailPanel({
   recordingId,
   audioSrc,
-  downloadName,
   transcriptionText,
   segmentsUrl,
   whisperUnavailableHint,
@@ -157,7 +154,6 @@ export default function RecordingDetailPanel({
           ref={playerRef}
           src={audioSrc}
           recordingId={recordingId}
-          downloadName={downloadName}
           onTimeUpdate={handleTimeUpdate}
         />
       </div>

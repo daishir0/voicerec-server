@@ -428,7 +428,6 @@ export default function RecordingsPage() {
                     <RecordingDetailPanel
                       recordingId={r.id}
                       audioSrc={`/api/web/recordings/${r.id}`}
-                      downloadName={r.originalName || r.filename}
                       transcriptionText={r.transcriptionText}
                       segmentsUrl={r.whisperTranscribedAt ? `/api/web/recordings/${r.id}/segments` : null}
                       whisperUnavailableHint={r.whisperError ? `セグメント未処理 (Error: ${r.whisperError})` : 'セグメント未処理'}
@@ -515,7 +514,6 @@ export default function RecordingsPage() {
                 <RecordingDetailPanel
                   recordingId={r.id}
                   audioSrc={`/api/web/recordings/${r.id}`}
-                  downloadName={r.originalName || r.filename}
                   transcriptionText={r.transcriptionStatus === 'completed' ? r.transcriptionText : null}
                   segmentsUrl={r.whisperTranscribedAt ? `/api/web/recordings/${r.id}/segments` : null}
                   whisperUnavailableHint={

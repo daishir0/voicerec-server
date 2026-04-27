@@ -21,8 +21,6 @@ export interface AudioPlayerProps {
   src: string;
   /** 録音ID。再生位置 / 速度を localStorage に保存するキー */
   recordingId?: string;
-  /** ダウンロード時に提示するファイル名 */
-  downloadName?: string;
   /** 再生位置が変わるたびに通知 (timeupdate) */
   onTimeUpdate?: (sec: number) => void;
 }
@@ -40,7 +38,7 @@ function fmt(sec: number): string {
 }
 
 const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function AudioPlayer(
-  { src, recordingId, downloadName, onTimeUpdate },
+  { src, recordingId, onTimeUpdate },
   ref
 ) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -341,15 +339,6 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function Aud
           <option key={s} value={s}>{s}x</option>
         ))}
       </select>
-      <a
-        className="audio-player-btn audio-player-btn-download"
-        href={src}
-        download={downloadName ?? true}
-        title="ダウンロード"
-        aria-label="ダウンロード"
-      >
-        ⤓
-      </a>
     </div>
   );
 });
