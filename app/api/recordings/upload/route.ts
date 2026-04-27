@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateBearer } from "@/lib/bearer-auth";
 import { prisma } from '@/lib/db';
+import { writeEncrypted } from '@/lib/file-crypto';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -74,7 +75,8 @@ export async function POST(req: NextRequest) {
   filename = path.basename(filePath);
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  await fs.writeFile(filePath, buffer);
+  // ディスク上は暗号化（at-rest encryption）。Recording.fileSize は平文サイズで維持。
+  await writeEncrypted(filePath, buffer);
 
   const recordedAt = parseRecordedAtFromFilename(filename) ?? parseRecordedAtFromFilename(originalName) ?? new Date();
 

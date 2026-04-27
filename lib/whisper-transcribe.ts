@@ -3,6 +3,7 @@ import path from 'path';
 import OpenAI from 'openai';
 import { prisma } from '@/lib/db';
 import { splitAudioForWhisper, cleanupChunks, getAudioMetadata } from '@/lib/audio-utils';
+import { isEncrypted, decryptToTempFile } from '@/lib/file-crypto';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -44,64 +45,78 @@ export async function transcribeWithWhisper(
     throw new Error(`Audio file not found on disk: ${absolutePath}`);
   }
 
-  const metadata = await getAudioMetadata(absolutePath);
-  const chunks = await splitAudioForWhisper(absolutePath, metadata.duration);
-
-  const resolved: ResolvedSegment[] = [];
-  let timeOffset = 0;
-  let seq = 0;
-  let detectedLanguage: string | null = null;
-
-  try {
-    for (let i = 0; i < chunks.length; i++) {
-      const chunkPath = chunks[i];
-      const fileStream = fs.createReadStream(chunkPath);
-
-      const response = await openai.audio.transcriptions.create({
-        file: fileStream,
-        model: 'whisper-1',
-        response_format: 'verbose_json',
-        language,
-      });
-
-      // verbose_json は { text, language, duration, segments: [...] }
-      const respLang = (response as unknown as { language?: string }).language;
-      if (respLang && !detectedLanguage) {
-        detectedLanguage = respLang;
-      }
-
-      const segs: WhisperSegmentRaw[] = ((response as unknown as { segments?: WhisperSegmentRaw[] }).segments) ?? [];
-
-      for (const s of segs) {
-        const startOffset = timeOffset + s.start;
-        const endOffset = timeOffset + s.end;
-        resolved.push({
-          seq: seq++,
-          startOffset,
-          endOffset,
-          startAt: new Date(baseTime.getTime() + startOffset * 1000),
-          endAt: new Date(baseTime.getTime() + endOffset * 1000),
-          text: s.text.trim(),
-        });
-      }
-
-      // 次チャンク用のオフセットを実測値で進める
-      if (chunkPath !== absolutePath) {
-        const chunkMeta = await getAudioMetadata(chunkPath);
-        timeOffset += chunkMeta.duration;
-      } else {
-        timeOffset = metadata.duration;
-      }
-    }
-  } finally {
-    await cleanupChunks(chunks, absolutePath).catch(() => {});
+  // 暗号化されている場合は /tmp に復号した一時ファイルを作って ffmpeg / OpenAI に渡す。
+  // 一時ファイルは finally で必ず削除。
+  let workingPath = absolutePath;
+  let tempCleanup: (() => Promise<void>) | null = null;
+  if (await isEncrypted(absolutePath)) {
+    const dec = await decryptToTempFile(absolutePath);
+    workingPath = dec.path;
+    tempCleanup = dec.cleanup;
   }
 
-  return {
-    segments: resolved,
-    detectedLanguage,
-    audioDuration: metadata.duration,
-  };
+  try {
+    const metadata = await getAudioMetadata(workingPath);
+    const chunks = await splitAudioForWhisper(workingPath, metadata.duration);
+
+    const resolved: ResolvedSegment[] = [];
+    let timeOffset = 0;
+    let seq = 0;
+    let detectedLanguage: string | null = null;
+
+    try {
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkPath = chunks[i];
+        const fileStream = fs.createReadStream(chunkPath);
+
+        const response = await openai.audio.transcriptions.create({
+          file: fileStream,
+          model: 'whisper-1',
+          response_format: 'verbose_json',
+          language,
+        });
+
+        // verbose_json は { text, language, duration, segments: [...] }
+        const respLang = (response as unknown as { language?: string }).language;
+        if (respLang && !detectedLanguage) {
+          detectedLanguage = respLang;
+        }
+
+        const segs: WhisperSegmentRaw[] = ((response as unknown as { segments?: WhisperSegmentRaw[] }).segments) ?? [];
+
+        for (const s of segs) {
+          const startOffset = timeOffset + s.start;
+          const endOffset = timeOffset + s.end;
+          resolved.push({
+            seq: seq++,
+            startOffset,
+            endOffset,
+            startAt: new Date(baseTime.getTime() + startOffset * 1000),
+            endAt: new Date(baseTime.getTime() + endOffset * 1000),
+            text: s.text.trim(),
+          });
+        }
+
+        // 次チャンク用のオフセットを実測値で進める
+        if (chunkPath !== workingPath) {
+          const chunkMeta = await getAudioMetadata(chunkPath);
+          timeOffset += chunkMeta.duration;
+        } else {
+          timeOffset = metadata.duration;
+        }
+      }
+    } finally {
+      await cleanupChunks(chunks, workingPath).catch(() => {});
+    }
+
+    return {
+      segments: resolved,
+      detectedLanguage,
+      audioDuration: metadata.duration,
+    };
+  } finally {
+    if (tempCleanup) await tempCleanup().catch(() => {});
+  }
 }
 
 /**

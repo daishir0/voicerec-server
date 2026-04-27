@@ -793,6 +793,95 @@ async function testsPhaseD() {
   });
 }
 
+// ======= Phase E: at-rest encryption =======
+
+async function testsPhaseE() {
+  console.log('');
+  console.log('=== Phase E: At-rest Encryption ===');
+
+  // Phase A でアップロードした録音ファイルが暗号化済みであることを確認
+  await test('E-1: アップロードされた音声ファイルがディスク上で暗号化されている', async () => {
+    const rec = await prisma.recording.findUnique({
+      where: { id: state.uploadedRecordingId },
+      select: { filePath: true },
+    });
+    assert(rec !== null, 'recording exists');
+    const path = await import('path');
+    const fs = await import('fs/promises');
+    const abs = path.isAbsolute(rec!.filePath)
+      ? rec!.filePath
+      : path.join(process.cwd(), rec!.filePath);
+
+    const fd = await fs.open(abs, 'r');
+    try {
+      const buf = Buffer.alloc(8);
+      await fd.read(buf, 0, 8, 0);
+      const expected = Buffer.from([0x56, 0x52, 0x45, 0x43, 0x31, 0x00, 0x00, 0x00]);
+      assert(buf.equals(expected), 'first 8 bytes should be VREC1 magic (got ' + buf.toString('hex') + ')');
+    } finally {
+      await fd.close();
+    }
+  });
+
+  await test('E-2: ディスク上のファイルを直接 ffprobe で開けない（暗号化されているため）', async () => {
+    const rec = await prisma.recording.findUnique({
+      where: { id: state.uploadedRecordingId },
+      select: { filePath: true },
+    });
+    const path = await import('path');
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFileAsync = promisify(execFile);
+    const abs = path.isAbsolute(rec!.filePath)
+      ? rec!.filePath
+      : path.join(process.cwd(), rec!.filePath);
+    let failed = false;
+    try {
+      await execFileAsync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', abs]);
+    } catch {
+      failed = true;
+    }
+    assert(failed, 'ffprobe must fail on encrypted file (audio header is hidden)');
+  });
+
+  await test('E-3: HTTP 経由で平文音声を取得できる（復号配信）', async () => {
+    const cookies = await loginAsSession(state.userA!.username, state.userA!.password);
+    const res = await httpRaw('GET', `/api/web/recordings/${state.uploadedRecordingId}`, { cookies });
+    assertEq(res.status, 200, 'audio served');
+    // 平文 m4a の ftyp box を含むはず（最初の 12 byte 以内に "ftyp"）
+    const body = res.body as string; // httpRaw の body は string なので最初の 16 bytes をチェック
+    const first16 = body.slice(0, 16);
+    assert(first16.includes('ftyp'), 'decrypted audio contains ftyp box (m4a header)');
+  });
+
+  await test('E-4: Range リクエストでも平文サイズで応答される', async () => {
+    const cookies = await loginAsSession(state.userA!.username, state.userA!.password);
+    const res = await httpRaw('GET', `/api/web/recordings/${state.uploadedRecordingId}`, {
+      cookies,
+      headers: { Range: 'bytes=0-99' },
+    });
+    assertEq(res.status, 206, '206 Partial Content');
+    const cr = res.headers.get('content-range');
+    assert(typeof cr === 'string' && cr.startsWith('bytes 0-99/'), `Content-Range header (got ${cr})`);
+    // 末尾の総サイズ (例: bytes 0-99/12345) は平文サイズ — Recording.fileSize と一致
+    const total = parseInt(cr!.split('/')[1], 10);
+    const rec = await prisma.recording.findUnique({
+      where: { id: state.uploadedRecordingId },
+      select: { fileSize: true },
+    });
+    assertEq(total, rec!.fileSize, 'Content-Range total matches Recording.fileSize (plaintext size)');
+  });
+
+  await test('E-5: 暗号化ファイルでも文字起こしが完走している（Phase A の結果を再確認）', async () => {
+    const rec = await prisma.recording.findUnique({
+      where: { id: state.uploadedRecordingId },
+      select: { transcriptionText: true, transcriptionStatus: true },
+    });
+    assertEq(rec!.transcriptionStatus, 'completed', 'transcription status completed');
+    assert((rec!.transcriptionText ?? '').length > 0, 'transcription text non-empty');
+  });
+}
+
 // ======= MAIN =======
 
 async function main() {
@@ -802,6 +891,7 @@ async function main() {
     await testsPhaseB();
     await testsPhaseC();
     await testsPhaseD();
+    await testsPhaseE();
   } finally {
     await teardown();
   }

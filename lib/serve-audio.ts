@@ -1,5 +1,5 @@
 /**
- * 音声ファイル配信ヘルパ：HTTP Range リクエスト対応。
+ * 音声ファイル配信ヘルパ：HTTP Range リクエスト対応 + at-rest 暗号化対応。
  *
  * ブラウザの音声 seek 操作（`audio.currentTime = N`）はサーバが
  * `Accept-Ranges: bytes` を返し `Range` ヘッダを処理することを前提とする。
@@ -8,11 +8,22 @@
  * - Range なし → 200、ファイル全体（ストリーム）
  * - Range あり → 206 Partial Content、要求範囲のみ
  * - 範囲不正 → 416 Range Not Satisfiable
+ *
+ * 暗号化対応:
+ *   - 暗号化済ファイル (magic VREC1) は復号ストリームで配信
+ *   - 平文ファイル（移行前）はそのまま配信（後方互換）
+ *   - クライアントから見える Range / Content-Length は **常に平文サイズ**
  */
 
 import fs from 'fs';
 import { stat } from 'fs/promises';
 import { NextResponse } from 'next/server';
+import { Readable } from 'stream';
+import {
+  isEncrypted,
+  getPlaintextSize,
+  createPlaintextRangeStream,
+} from './file-crypto';
 
 export interface ServeAudioOptions {
   absolutePath: string;
@@ -52,7 +63,7 @@ function parseRange(header: string, fileSize: number): ParsedRange | null {
   return { start, end };
 }
 
-function nodeStreamToWebStream(nodeStream: fs.ReadStream): ReadableStream<Uint8Array> {
+function nodeStreamToWebStream(nodeStream: Readable): ReadableStream<Uint8Array> {
   return new ReadableStream({
     start(controller) {
       nodeStream.on('data', (chunk) => {
@@ -70,10 +81,17 @@ function nodeStreamToWebStream(nodeStream: fs.ReadStream): ReadableStream<Uint8A
 export async function serveAudioWithRange(opts: ServeAudioOptions): Promise<Response> {
   const { absolutePath, mimeType, filename, rangeHeader } = opts;
 
-  let fileSize: number;
+  // 平文サイズ（暗号化判定 + サイズ計算）
+  let plainSize: number;
+  let encrypted: boolean;
   try {
-    const s = await stat(absolutePath);
-    fileSize = s.size;
+    encrypted = await isEncrypted(absolutePath);
+    if (encrypted) {
+      plainSize = await getPlaintextSize(absolutePath);
+    } else {
+      const s = await stat(absolutePath);
+      plainSize = s.size;
+    }
   } catch {
     return NextResponse.json({ error: 'File not found' }, { status: 404 });
   }
@@ -86,36 +104,40 @@ export async function serveAudioWithRange(opts: ServeAudioOptions): Promise<Resp
   };
 
   if (rangeHeader) {
-    const parsed = parseRange(rangeHeader, fileSize);
+    const parsed = parseRange(rangeHeader, plainSize);
     if (!parsed) {
       return new Response(null, {
         status: 416,
         headers: {
           ...baseHeaders,
-          'Content-Range': `bytes */${fileSize}`,
+          'Content-Range': `bytes */${plainSize}`,
         },
       });
     }
     const { start, end } = parsed;
     const length = end - start + 1;
-    const stream = fs.createReadStream(absolutePath, { start, end });
+    const stream: Readable = encrypted
+      ? createPlaintextRangeStream(absolutePath, start, end)
+      : fs.createReadStream(absolutePath, { start, end });
     return new Response(nodeStreamToWebStream(stream), {
       status: 206,
       headers: {
         ...baseHeaders,
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Content-Range': `bytes ${start}-${end}/${plainSize}`,
         'Content-Length': String(length),
       },
     });
   }
 
-  // 通常の全件配信
-  const stream = fs.createReadStream(absolutePath);
+  // 通常の全件配信（平文サイズ全体）
+  const stream: Readable = encrypted
+    ? createPlaintextRangeStream(absolutePath, 0, Math.max(0, plainSize - 1))
+    : fs.createReadStream(absolutePath);
   return new Response(nodeStreamToWebStream(stream), {
     status: 200,
     headers: {
       ...baseHeaders,
-      'Content-Length': String(fileSize),
+      'Content-Length': String(plainSize),
     },
   });
 }

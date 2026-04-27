@@ -22,6 +22,7 @@ import {
   transcribeWithWhisper,
   ResolvedSegment,
 } from '@/lib/whisper-transcribe';
+import { isEncrypted, decryptToTempFile } from '@/lib/file-crypto';
 import {
   getTranscriptionMode,
   TranscriptionMode,
@@ -100,13 +101,23 @@ export async function runTranscription(
   const language = recording.user.transcriptionLanguage || 'ja';
   const baseTime = recording.recordedAt ?? recording.createdAt;
 
+  // 暗号化されている場合は /tmp に復号した一時ファイルを作って ffmpeg / OpenAI に渡す。
+  // 一時ファイルは finally で必ず削除。
+  let workingPath = absolutePath;
+  let tempCleanup: (() => Promise<void>) | null = null;
+  if (await isEncrypted(absolutePath)) {
+    const dec = await decryptToTempFile(absolutePath);
+    workingPath = dec.path;
+    tempCleanup = dec.cleanup;
+  }
+
   try {
     if (mode === 'whisper-only') {
-      return await runWhisperOnly(recordingId, recording.userId, absolutePath, language, baseTime);
+      return await runWhisperOnly(recordingId, recording.userId, workingPath, language, baseTime);
     } else if (mode === 'dual') {
-      return await runDual(recordingId, recording.userId, absolutePath, language, baseTime);
+      return await runDual(recordingId, recording.userId, workingPath, language, baseTime);
     } else {
-      return await runGpt4oOnly(recordingId, absolutePath, language);
+      return await runGpt4oOnly(recordingId, workingPath, language);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
@@ -118,6 +129,8 @@ export async function runTranscription(
       },
     });
     throw err;
+  } finally {
+    if (tempCleanup) await tempCleanup().catch(() => {});
   }
 }
 

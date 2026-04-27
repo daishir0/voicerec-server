@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getAudioMetadata, formatTimestamp } from '@/lib/audio-utils';
+import { moveAndEncrypt } from '@/lib/file-crypto';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -48,8 +49,8 @@ export async function handleBrowserUpload(file: File, userId: string, username: 
   }
   filename = path.basename(filePath);
 
-  // 一時ファイルを正式な場所に移動
-  await fs.rename(tmpPath, filePath);
+  // 一時平文ファイルを暗号化しつつ最終パスへ移動（tmpPath は内部で削除される）
+  await moveAndEncrypt(tmpPath, filePath);
 
   const recording = await prisma.recording.create({
     data: {
