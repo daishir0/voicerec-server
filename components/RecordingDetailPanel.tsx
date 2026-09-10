@@ -22,6 +22,8 @@ export interface RecordingDetailPanelProps {
   segmentsUrl: string | null;
   /** whisper 未処理 / エラー時のメッセージ */
   whisperUnavailableHint?: string;
+  /** URL パラメーター ?t= から渡される初期シーク位置（秒）。マウント時に自動シーク */
+  initialSeekTime?: number;
 }
 
 type Tab = 'segments' | 'text';
@@ -81,6 +83,7 @@ export default function RecordingDetailPanel({
   transcriptionText,
   segmentsUrl,
   whisperUnavailableHint,
+  initialSeekTime,
 }: RecordingDetailPanelProps) {
   const playerRef = useRef<AudioPlayerHandle | null>(null);
   const [tab, setTab] = useState<Tab>(segmentsUrl ? 'segments' : 'text');
@@ -90,6 +93,13 @@ export default function RecordingDetailPanel({
   const [search, setSearch] = useState('');
   const segmentsContainerRef = useRef<HTMLDivElement | null>(null);
   const activeSegmentRef = useRef<HTMLDivElement | null>(null);
+
+  // URL ?t= パラメーターからの初期シーク（AudioPlayer の seek は loadedmetadata 前でも内部でキューイング）
+  useEffect(() => {
+    if (initialSeekTime == null || !isFinite(initialSeekTime) || initialSeekTime < 0) return;
+    playerRef.current?.seek(initialSeekTime, false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // セグメント遅延読み込み (タブ切替 / segmentsUrl 変化時)
   useEffect(() => {

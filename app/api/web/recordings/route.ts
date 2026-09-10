@@ -33,8 +33,11 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(MAX_LIMIT, Math.max(1, isFinite(limitRaw) ? limitRaw : DEFAULT_LIMIT));
   const before = sp.get('before') || null;
   const search = (sp.get('search') ?? '').trim();
+  const id = sp.get('id') || null;
 
   const where: Prisma.RecordingWhereInput = {};
+  // ?id= で特定録音を直接取得（URL直接リンク用）
+  if (id) where.id = id;
   const isAdmin = session.role === 'admin';
 
   if (isAdmin) {

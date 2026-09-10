@@ -52,6 +52,10 @@ export default function RecordingsPage() {
     setExpandedId((prev) => (prev === id ? null : id));
   }, []);
 
+  // URL ?r=recordingId &t=秒 による直接リンク対応
+  const [urlSeekTime, setUrlSeekTime] = useState<number | null>(null);
+  const urlFetchedRef = useRef(false);
+
   // Search (デバウンス)
   const [searchQuery, setSearchQuery] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
@@ -71,6 +75,39 @@ export default function RecordingsPage() {
   const [uploadProgress, setUploadProgress] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // URL パラメーター読み取り（マウント時 1 回のみ）
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const r = sp.get('r');
+    const t = sp.get('t');
+    if (r) {
+      setExpandedId(r);
+      if (t) {
+        const tNum = parseFloat(t);
+        if (isFinite(tNum) && tNum >= 0) setUrlSeekTime(tNum);
+      }
+    }
+  }, []);
+
+  // URL ?r= で指定された録音を API から取得して先頭に追加
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const r = sp.get('r');
+    if (!r || !role || urlFetchedRef.current) return;
+    urlFetchedRef.current = true;
+    fetch(`/api/web/recordings?id=${encodeURIComponent(r)}&limit=1`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { items: Recording[] } | null) => {
+        if (data?.items?.length) {
+          setRecordings((prev) => {
+            if (prev.some((rec) => rec.id === r)) return prev;
+            return [data.items[0], ...prev];
+          });
+        }
+      })
+      .catch(() => { /* noop */ });
+  }, [role]);
 
   // 自分の役割を取得
   useEffect(() => {
@@ -431,6 +468,7 @@ export default function RecordingsPage() {
                       transcriptionText={r.transcriptionText}
                       segmentsUrl={r.whisperTranscribedAt ? `/api/web/recordings/${r.id}/segments` : null}
                       whisperUnavailableHint={r.whisperError ? `セグメント未処理 (Error: ${r.whisperError})` : 'セグメント未処理'}
+                      initialSeekTime={urlSeekTime !== null && expandedId === r.id ? urlSeekTime : undefined}
                     />
                   </td>
                 </tr>
@@ -523,6 +561,7 @@ export default function RecordingsPage() {
                         ? `セグメント未処理 (Error: ${r.whisperError})`
                         : 'セグメント未処理'
                   }
+                  initialSeekTime={urlSeekTime !== null && expandedId === r.id ? urlSeekTime : undefined}
                 />
               )}
             </div>
