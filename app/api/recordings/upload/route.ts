@@ -32,16 +32,29 @@ function formatNow(): string {
 }
 
 export async function POST(req: NextRequest) {
+  const reqStartedAt = Date.now();
   const user = await authenticateBearer(req);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  console.log(`[upload] auth ok userId=${user.id} +${Date.now() - reqStartedAt}ms`);
+  console.log(`[upload] headers: content-length=${req.headers.get('content-length')} content-type=${req.headers.get('content-type')} transfer-encoding=${req.headers.get('transfer-encoding') ?? '(none)'} forwarded-for=${req.headers.get('x-forwarded-for') ?? '(none)'}`);
 
-  const formData = await req.formData();
+  let formData: FormData;
+  try {
+    formData = await req.formData();
+    console.log(`[upload] formData parsed +${Date.now() - reqStartedAt}ms keys=${Array.from(formData.keys()).join(',')}`);
+  } catch (err) {
+    console.error(`[upload] formData PARSE FAILED +${Date.now() - reqStartedAt}ms`, err);
+    return NextResponse.json({ error: 'Bad multipart body' }, { status: 400 });
+  }
+
   const file = formData.get('file') as File | null;
   if (!file) {
+    console.error(`[upload] file field missing. all keys=[${Array.from(formData.keys()).join(',')}]`);
     return NextResponse.json({ error: 'No file provided' }, { status: 400 });
   }
+  console.log(`[upload] file received: name="${file.name}" size=${file.size} type="${file.type}"`);
 
   const originalName = (formData.get('originalName') as string) || file.name;
   const displayName = (formData.get('displayName') as string) || originalName;
