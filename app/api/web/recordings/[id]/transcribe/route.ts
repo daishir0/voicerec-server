@@ -7,7 +7,8 @@ import { runTranscription } from '@/lib/transcribe-pipeline';
  * 録音を再文字起こしする（admin only）。
  * モバイルの /api/recordings/[id]/transcribe は Bearer 認証で別系統。
  */
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const session = await getSession();
   if (!session || session.role !== 'admin') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

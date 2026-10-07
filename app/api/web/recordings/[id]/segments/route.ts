@@ -7,7 +7,8 @@ import { prisma } from '@/lib/db';
  * - user: 自分の録音のみ（403）
  * - admin: 全件閲覧可
  */
-export async function GET(_req: Request, { params }: { params: { id: string } }) {
+export async function GET(_req: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });

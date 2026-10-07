@@ -3,10 +3,8 @@ import { authenticateBearer } from "@/lib/bearer-auth";
 import { prisma } from '@/lib/db';
 import { executeLayer1 } from '@/lib/layer1';
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const user = await authenticateBearer(req);
     if (!user) {

@@ -4,7 +4,8 @@ import { prisma } from '@/lib/db';
 import fs from 'fs/promises';
 import path from 'path';
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = await authenticateBearer(req);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

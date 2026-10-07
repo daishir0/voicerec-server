@@ -4,8 +4,9 @@ import { prisma } from '@/lib/db';
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { domainId: string; weekNumber: string } }
+  props: { params: Promise<{ domainId: string; weekNumber: string }> }
 ) {
+  const params = await props.params;
   const user = await authenticateBearer(req);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 

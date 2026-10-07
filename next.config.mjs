@@ -1,19 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // GHSA-2xp9-vwfh-vxw4 (画像最適化APIのAVIF処理経由の未認証RCE) の応急対応。
-  // next 14系に修正版が無く 15.5.24 へのメジャー更新が必要なため、当該APIを無効化して回避する。
-  // このアプリは next/image を使用していないため機能影響なし。next更新後はこの行を外してよい。
+  // 画像最適化 API は使わない (next/image 未使用)。GHSA-2xp9-vwfh-vxw4 (AVIF 処理経由の
+  // 未認証 RCE) は next 15.5.24 で修正済みだが、使わない機能は攻撃面を残さないため無効のまま。
   images: {
     unoptimized: true,
   },
   experimental: {
     serverActions: {
       bodySizeLimit: '500mb',
-    },
-  },
-  api: {
-    bodyParser: {
-      sizeLimit: '500mb',
     },
   },
   async rewrites() {

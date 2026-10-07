@@ -3,10 +3,8 @@ import { authenticateBearer } from '@/lib/bearer-auth';
 import { prisma } from '@/lib/db';
 import { runTranscription } from '@/lib/transcribe-pipeline';
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = await authenticateBearer(req);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

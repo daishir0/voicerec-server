@@ -15,7 +15,8 @@ import path from 'path';
  * スコープ: Bearer が指すユーザーの録音のみ。role は見ない（admin も横断しない）。
  * 他人の録音・論理削除済みは存在を秘匿して 404 を返す。
  */
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = await authenticateBearer(req);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
