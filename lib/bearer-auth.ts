@@ -7,7 +7,12 @@ import type { User } from '@prisma/client';
  * モバイル/外部クライアント向け Bearer token 認証。
  * POST /api/auth/login で発行されたトークンを検証する。
  *
- * Basic 認証は完全削除済み。このモジュールが /api/* の唯一の認証経路。
+ * Basic 認証は完全削除済み。
+ *
+ * ⚠️ /api/* の全てがこの経路ではない。/api/web/* と /api/admin/* は Cookie セッション
+ *    (lib/auth.ts・middleware.ts でガード)、/api/mcp は OAuth 2.0 + PKCE (lib/mcp-auth.ts)。
+ *    このモジュールが担当するのは /api/auth/*・/api/recordings/*・/api/ontology/* など
+ *    モバイル/外部クライアント向けのエンドポイント。
  */
 
 function hashToken(token: string): string {

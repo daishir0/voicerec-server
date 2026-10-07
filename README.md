@@ -1,11 +1,11 @@
 # voicerec-server
 
 ## Overview
-voicerec-server is a Next.js 14 backend for recording ingestion, dual transcription, and programmatic access via MCP (Model Context Protocol). It is the companion server to [voicerec](https://github.com/daishir0/voicerec), an Expo-based mobile recording app, and also exposes a Claude.ai-compatible MCP endpoint so that recorded audio can be queried in natural language from Claude.ai.
+voicerec-server is a Next.js 14 backend for recording ingestion, transcription, and programmatic access via MCP (Model Context Protocol). It is the companion server to [voicerec](https://github.com/daishir0/voicerec), an Expo-based mobile recording app, and also exposes a Claude.ai-compatible MCP endpoint so that recorded audio can be queried in natural language from Claude.ai.
 
 Key features:
 - Mobile upload API with **Bearer token** authentication (Basic Auth has been removed)
-- **Dual transcription pipeline**: gpt-4o-transcribe for high-quality full text + whisper-1 (verbose_json) for sentence-level segments with absolute wall-clock timestamps
+- **Transcription pipeline** with a `TRANSCRIPTION_MODE` switch. The default is `whisper-only`: whisper-1 (`verbose_json`) produces sentence-level segments with absolute wall-clock timestamps, and the full text is derived from them. `dual` additionally runs gpt-4o-transcribe for the full text, at roughly twice the cost
 - **MCP server** for Claude.ai remote connectors with **OAuth 2.0 + PKCE** authorization code flow
 - Per-user transcription language setting (ja / en / zh / ko / es / fr / de / it / pt / ru)
 - Ontology-based domain-specific text correction (Layer 1 / Layer 2)
@@ -68,11 +68,11 @@ Three access paths, each with its own authentication scheme — **Basic Auth has
 
 | Access Point | Method | Details |
 |---|---|---|
-| Mobile app / external API (`/api/*`) | **Bearer token** | `Authorization: Bearer <token>` where token is issued by `POST /api/auth/login` (stored as SHA-256 hash in `MobileToken` table) |
-| Web portal (`/user/*`, `/admin/*`) | **Cookie session** | Unified `session` cookie, HMAC-SHA256 signed, 24h expiry, `role=user` or `role=admin` |
+| Mobile app / external API (`/api/auth/*`, `/api/recordings/*`, `/api/ontology/*`, …) | **Bearer token** | `Authorization: Bearer <token>` where token is issued by `POST /api/auth/login` (stored as SHA-256 hash in `MobileToken` table) |
+| Web portal (`/recordings`, `/settings`, `/admin/*`) and its APIs (`/api/web/*`, `/api/admin/*`) | **Cookie session** | Unified `session` cookie, HMAC-SHA256 signed, 24h expiry, `role=user` or `role=admin` |
 | Claude.ai MCP (`/api/mcp`) | **OAuth 2.0 + PKCE** (Bearer) or Basic (Client ID / Secret for curl testing) | Full authorization code flow with SHA-256 PKCE S256 |
 
-Admin access is determined by `User.role === 'admin'` — the previous separate `AdminUser` table has been merged into `User`. A single unified `/user/login` or `/admin/login` page produces the same `session` cookie with role embedded.
+Admin access is determined by `User.role === 'admin'` — the previous separate `AdminUser` table has been merged into `User`. A single unified `/login` page produces the same `session` cookie with role embedded.
 
 ## Mobile Upload API
 
@@ -95,7 +95,7 @@ Returns `{token, userId, username, role}`. The plaintext token is returned **onc
 | POST | `/api/recordings/upload` | Upload a recording (multipart/form-data) |
 | GET | `/api/recordings` | List the authenticated user's recordings |
 | DELETE | `/api/recordings/[id]` | Delete a recording |
-| POST | `/api/recordings/[id]/transcribe` | Run the dual transcription pipeline |
+| POST | `/api/recordings/[id]/transcribe` | Run the transcription pipeline |
 | GET | `/api/recordings/[id]/transcription` | Get gpt-4o transcription result |
 | POST | `/api/recordings/[id]/correct/layer1` | Run Layer 1 correction |
 | POST | `/api/recordings/[id]/correct/layer2` | Run Layer 2 correction |
@@ -114,7 +114,7 @@ Returns `{token, userId, username, role}`. The plaintext token is returned **onc
 On successful upload, the server:
 1. Stores the file under `./data/<username>/<filename>`
 2. Parses `recordedAt` from the filename (JST)
-3. **Fires the dual transcription pipeline asynchronously**
+3. **Fires the transcription pipeline asynchronously**
 
 ## Transcription Pipeline
 
@@ -146,7 +146,7 @@ The `Recording.whisperTranscribedAt` field is set to the completion timestamp (n
 
 ### Language selection
 - The uploader's `User.transcriptionLanguage` field determines the language passed to both OpenAI calls (default: `ja`)
-- Users can change their own language at `/user/settings`
+- Users can change their own language at `/settings`
 - Admins can change any user's language from `/admin/users`
 
 ## MCP Server (Claude.ai Remote Connector)
@@ -158,7 +158,7 @@ JSON-RPC 2.0 over HTTP POST at `/api/mcp` (compatible with Claude.ai's Custom Co
 
 ### OAuth 2.0 + PKCE Flow
 1. Claude.ai discovers OAuth metadata at `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/api/mcp`
-2. The user's browser is redirected to `/authorize` (requires session cookie; redirects to `/user/login?next=...` if not logged in)
+2. The user's browser is redirected to `/authorize` (requires session cookie; redirects to `/login?next=...` if not logged in)
 3. After login as the client's owner, an authorization code is issued and the browser is redirected back to `https://claude.ai/api/mcp/auth_callback` with `code` + `state`
 4. Claude.ai exchanges the code at `POST /token` with PKCE `code_verifier` (SHA-256 S256), `client_id`, `client_secret` → receives `access_token` (1h) + `refresh_token` (30d)
 5. Claude.ai sends `Authorization: Bearer <access_token>` to `POST /api/mcp`
@@ -166,7 +166,7 @@ JSON-RPC 2.0 over HTTP POST at `/api/mcp` (compatible with Claude.ai's Custom Co
 All tokens and auth codes are stored as SHA-256 hashes only — plaintext values are never persisted.
 
 ### Issuing MCP credentials
-Users go to `/user/settings`, click "発行" (issue), and receive a one-time display of:
+Users go to `/settings`, click "発行" (issue), and receive a one-time display of:
 1. **Remote MCP server URL**
 2. **OAuth Client ID**
 3. **OAuth Client Secret** (shown once, never again)
@@ -191,15 +191,15 @@ Time-based queries only match recordings where `whisperTranscribedAt IS NOT NULL
 
 | Page | Description |
 |---|---|
-| `/user/login` | Login (supports `?next=` and `?hint=` parameters for OAuth redirects) |
-| `/user/recordings` | Own recordings — playback, GPT-4o transcription, whisper segments viewer |
-| `/user/settings` | Transcription language + MCP credential issuance / revocation |
+| `/login` | Login (supports `?next=` and `?hint=` parameters for OAuth redirects) |
+| `/recordings` | Own recordings — playback, GPT-4o transcription, whisper segments viewer |
+| `/settings` | Transcription language + MCP credential issuance / revocation |
 
 ### Admin Panel (`/admin/*`)
 
 | Page | Description |
 |---|---|
-| `/admin/login` | Admin login (rejects non-admin users) |
+| `/login` | Admin login (rejects non-admin users) |
 | `/admin/users` | Manage app users, edit per-user transcription language |
 | `/admin/recordings` | View all recordings, impersonation-aware, whisper segments viewer |
 | `/admin/admins` | Manage other admin users |
@@ -234,7 +234,7 @@ Uploaded recordings are saved to `./data/<username>/` with filenames in `yyyymmd
 npm run test:e2e
 ```
 
-Runs 35 test cases covering the full upload → dual transcription → auth → OAuth → MCP pipeline against the live server and database (creates and cleans up test users prefixed with `e2e_`). One 11-second Japanese audio fixture (auto-generated via OpenAI TTS into `tests/fixtures/audio/`, gitignored) is used for all cases to minimize OpenAI API cost (~$0.02 per run).
+Runs 35 test cases covering the full upload → transcription → auth → OAuth → MCP pipeline against the live server and database (creates and cleans up test users prefixed with `e2e_`). One 11-second Japanese audio fixture (auto-generated via OpenAI TTS into `tests/fixtures/audio/`, gitignored) is used for all cases to minimize OpenAI API cost (~$0.02 per run).
 
 ## Default Seed Data
 
@@ -260,11 +260,11 @@ MIT — see the LICENSE file.
 # voicerec-server
 
 ## 概要
-voicerec-server は Next.js 14 製のバックエンドサーバーで、録音アップロード受信、二重文字起こし、および MCP (Model Context Protocol) によるプログラマブルアクセスを提供します。Expo 製モバイル録音アプリ [voicerec](https://github.com/daishir0/voicerec) のコンパニオンサーバーであり、さらに Claude.ai 互換の MCP エンドポイントを公開することで、録音データを自然言語で問い合わせることができます。
+voicerec-server は Next.js 14 製のバックエンドサーバーで、録音アップロード受信、文字起こし、および MCP (Model Context Protocol) によるプログラマブルアクセスを提供します。Expo 製モバイル録音アプリ [voicerec](https://github.com/daishir0/voicerec) のコンパニオンサーバーであり、さらに Claude.ai 互換の MCP エンドポイントを公開することで、録音データを自然言語で問い合わせることができます。
 
 主な機能:
 - モバイルアップロード API は **Bearer トークン認証** (Basic 認証は完全削除)
-- **二重文字起こしパイプライン**: gpt-4o-transcribe で高品質な全文、whisper-1 (`verbose_json`) で絶対時刻付きの発話単位セグメント
+- **文字起こしパイプライン**（`TRANSCRIPTION_MODE` で切替）。既定は `whisper-only` で、whisper-1 (`verbose_json`) が絶対時刻付きの発話単位セグメントを作り、全文はそこから派生させる。`dual` では gpt-4o-transcribe も走らせて全文を得る（コスト約2倍）
 - **MCP サーバー**: Claude.ai リモートコネクタ向けに **OAuth 2.0 + PKCE** 認可コードフロー実装
 - ユーザー単位の文字起こし言語設定 (ja / en / zh / ko / es / fr / de / it / pt / ru)
 - オントロジーベースのドメイン特化補正 (Layer 1 / Layer 2)
@@ -327,11 +327,11 @@ npm run build && npm run start   # 本番モード
 
 | アクセスポイント | 方式 | 詳細 |
 |---|---|---|
-| モバイルアプリ / 外部 API (`/api/*`) | **Bearer トークン** | `Authorization: Bearer <token>` 。トークンは `POST /api/auth/login` で発行され、DB には SHA-256 ハッシュのみ保存 |
-| Web ポータル (`/user/*`, `/admin/*`) | **Cookie セッション** | 統一 `session` Cookie、HMAC-SHA256 署名、24時間有効、`role=user` or `role=admin` |
+| モバイルアプリ / 外部 API (`/api/auth/*`, `/api/recordings/*`, `/api/ontology/*` など) | **Bearer トークン** | `Authorization: Bearer <token>` 。トークンは `POST /api/auth/login` で発行され、DB には SHA-256 ハッシュのみ保存 |
+| Web ポータル (`/recordings`, `/settings`, `/admin/*`) とその API (`/api/web/*`, `/api/admin/*`) | **Cookie セッション** | 統一 `session` Cookie、HMAC-SHA256 署名、24時間有効、`role=user` or `role=admin` |
 | Claude.ai MCP (`/api/mcp`) | **OAuth 2.0 + PKCE** (Bearer) または Basic (curl テスト互換) | PKCE S256 認可コードフロー |
 
-管理者権限は `User.role === 'admin'` で判定されます。旧 `AdminUser` テーブルは `User` に統合され、ログイン画面は `/user/login` または `/admin/login` から同じ `session` Cookie を発行します。
+管理者権限は `User.role === 'admin'` で判定されます。旧 `AdminUser` テーブルは `User` に統合され、ログイン画面は `/login` で、そこから同じ `session` Cookie を発行します。
 
 ## モバイルアップロード API
 
@@ -354,7 +354,7 @@ Content-Type: application/json
 | POST | `/api/recordings/upload` | 録音アップロード (multipart/form-data) |
 | GET | `/api/recordings` | 認証ユーザーの録音一覧 |
 | DELETE | `/api/recordings/[id]` | 録音削除 |
-| POST | `/api/recordings/[id]/transcribe` | 二重文字起こし実行 |
+| POST | `/api/recordings/[id]/transcribe` | 文字起こし実行 |
 | GET | `/api/recordings/[id]/transcription` | gpt-4o 結果取得 |
 | POST | `/api/recordings/[id]/correct/layer1` | Layer 1 補正 |
 | POST | `/api/recordings/[id]/correct/layer2` | Layer 2 補正 |
@@ -373,7 +373,7 @@ Content-Type: application/json
 アップロード成功時、サーバーは:
 1. ファイルを `./data/<username>/<filename>` に保存
 2. ファイル名から `recordedAt` を JST 解釈でパース
-3. **二重文字起こしパイプラインを非同期実行**
+3. **文字起こしパイプラインを非同期実行**
 
 ## 文字起こしパイプライン
 
@@ -405,7 +405,7 @@ Content-Type: application/json
 
 ### 言語選択
 - アップロード時、uploader の `User.transcriptionLanguage` を両方の OpenAI 呼び出しに渡します (デフォルト `ja`)
-- ユーザーは `/user/settings` で自分の言語を変更可能
+- ユーザーは `/settings` で自分の言語を変更可能
 - 管理者は `/admin/users` で任意ユーザーの言語を変更可能
 
 ## MCP サーバー (Claude.ai リモートコネクタ)
@@ -417,7 +417,7 @@ voicerec-server は Model Context Protocol エンドポイントを公開し、C
 
 ### OAuth 2.0 + PKCE フロー
 1. Claude.ai が `/.well-known/oauth-authorization-server` と `/.well-known/oauth-protected-resource/api/mcp` でメタデータを取得
-2. ユーザーのブラウザが `/authorize` にリダイレクトされる (session Cookie 必須。未ログインなら `/user/login?next=...`)
+2. ユーザーのブラウザが `/authorize` にリダイレクトされる (session Cookie 必須。未ログインなら `/login?next=...`)
 3. Client 所有者としてログインすると認可コードが発行され、`https://claude.ai/api/mcp/auth_callback?code=...&state=...` にリダイレクト
 4. Claude.ai が `POST /token` で PKCE `code_verifier` (SHA-256 S256)、`client_id`、`client_secret` を付けてコードを交換し、`access_token` (1時間) と `refresh_token` (30日) を取得
 5. Claude.ai が `Authorization: Bearer <access_token>` で `POST /api/mcp` を呼び出す
@@ -425,7 +425,7 @@ voicerec-server は Model Context Protocol エンドポイントを公開し、C
 トークンと認可コードはすべて SHA-256 ハッシュでのみ保存され、平文は永続化されません。
 
 ### MCP クレデンシャル発行
-ユーザーが `/user/settings` で「発行」ボタンを押すと、**1回限り** 以下の3つが表示されます:
+ユーザーが `/settings` で「発行」ボタンを押すと、**1回限り** 以下の3つが表示されます:
 1. **Remote MCP server URL**
 2. **OAuth Client ID**
 3. **OAuth Client Secret** (このときのみ表示、以降は取得不可)
@@ -450,15 +450,15 @@ voicerec-server は Model Context Protocol エンドポイントを公開し、C
 
 | ページ | 説明 |
 |---|---|
-| `/user/login` | ログイン (`?next=` と `?hint=` パラメータを OAuth リダイレクト用にサポート) |
-| `/user/recordings` | 自分の録音一覧 — 再生、GPT-4o 文字起こし、whisper セグメントビュー |
-| `/user/settings` | 文字起こし言語 + MCP クレデンシャル発行/失効 |
+| `/login` | ログイン (`?next=` と `?hint=` パラメータを OAuth リダイレクト用にサポート) |
+| `/recordings` | 自分の録音一覧 — 再生、GPT-4o 文字起こし、whisper セグメントビュー |
+| `/settings` | 文字起こし言語 + MCP クレデンシャル発行/失効 |
 
 ### 管理パネル (`/admin/*`)
 
 | ページ | 説明 |
 |---|---|
-| `/admin/login` | 管理者ログイン (非 admin ロールは拒否) |
+| `/login` | 管理者ログイン (非 admin ロールは拒否) |
 | `/admin/users` | アプリユーザー管理、ユーザー別の文字起こし言語編集 |
 | `/admin/recordings` | 全録音表示 (impersonation 対応)、whisper セグメントビュー |
 | `/admin/admins` | 管理者ユーザー管理 |
@@ -493,7 +493,7 @@ voicerec-server は Model Context Protocol エンドポイントを公開し、C
 npm run test:e2e
 ```
 
-アップロード → 二重文字起こし → 認証 → OAuth → MCP の全パイプラインを実サーバー/実 DB に対して実行する 35 ケース (プレフィックス `e2e_` のテストユーザーを実行ごとに作成/クリーンアップ)。OpenAI API コスト最小化のため 1 本の 11 秒日本語音声フィクスチャ (OpenAI TTS で自動生成、`tests/fixtures/audio/` 配下・gitignore) で全ケースを回します。1 回あたり約 $0.02。
+アップロード → 文字起こし → 認証 → OAuth → MCP の全パイプラインを実サーバー/実 DB に対して実行する 35 ケース (プレフィックス `e2e_` のテストユーザーを実行ごとに作成/クリーンアップ)。OpenAI API コスト最小化のため 1 本の 11 秒日本語音声フィクスチャ (OpenAI TTS で自動生成、`tests/fixtures/audio/` 配下・gitignore) で全ケースを回します。1 回あたり約 $0.02。
 
 ## デフォルト Seed データ
 
