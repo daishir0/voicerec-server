@@ -62,6 +62,32 @@ export async function POST(req: NextRequest) {
   const durationRaw = parseFloat((formData.get('duration') as string) || '0');
   const duration = durationRaw > 1000 ? durationRaw / 1000 : durationRaw;
 
+  // 端末で作った文字起こし。付いていればサーバーでは作り直さない。
+  // 端末は選んだ範囲を既に文字にしているので、同じ音声に Whisper をもう一度かけるのは
+  // CPU と待ち時間の無駄になる。
+  const deviceText = (formData.get('transcriptText') as string) || '';
+  const deviceSource = (formData.get('transcriptSource') as string) || '';
+  const deviceLocale = (formData.get('transcriptLocale') as string) || '';
+  let deviceSegments: { startSec: number; endSec: number; text: string }[] = [];
+  const rawSegments = formData.get('transcriptSegments') as string | null;
+  if (rawSegments) {
+    try {
+      const parsed = JSON.parse(rawSegments);
+      if (Array.isArray(parsed)) {
+        deviceSegments = parsed
+          .filter((s) => s && typeof s.text === 'string')
+          .map((s) => ({
+            startSec: Number(s.startSec) || 0,
+            endSec: Number(s.endSec) || 0,
+            text: String(s.text),
+          }));
+      }
+    } catch (err) {
+      console.warn(`[upload] transcriptSegments を読めませんでした: ${err}`);
+    }
+  }
+  const hasDeviceTranscript = deviceText.trim().length > 0;
+
   // 重複チェック: 同じユーザー・同じoriginalNameが既にあれば既存を返す
   const existing = await prisma.recording.findFirst({
     where: { userId: user.id, originalName, deletedByUser: false },
@@ -106,6 +132,18 @@ export async function POST(req: NextRequest) {
         duration,
         mimeType: file.type || 'audio/mp4',
         recordedAt,
+        ...(hasDeviceTranscript
+          ? {
+              transcriptionStatus: 'completed',
+              transcriptionText: deviceText,
+              transcriptionSegments: JSON.stringify(
+                deviceSegments.map((s) => ({ start: s.startSec, end: s.endSec, text: s.text })),
+              ),
+              transcriptionSource: deviceSource || 'device',
+              transcriptionAt: new Date(),
+              ...(deviceLocale ? { language: deviceLocale.split('-')[0] } : {}),
+            }
+          : {}),
       },
     });
   } catch (err: any) {
@@ -120,13 +158,40 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  // 非同期で文字起こしを自動開始（fire-and-forget）
-  const baseUrl = req.nextUrl.origin;
-  const authHeader = req.headers.get('authorization') ?? '';
-  fetch(`${baseUrl}/api/recordings/${recording.id}/transcribe`, {
-    method: 'POST',
-    headers: { authorization: authHeader },
-  }).catch(() => {});
+  // 端末で作った文字起こしがあるなら、Segment も作って検索と時刻の逆引きに乗せる。
+  // ⚠️ 端末が送ってくる秒は「この録音の先頭から」の値。絶対時刻は recordedAt から作る。
+  if (hasDeviceTranscript && deviceSegments.length > 0) {
+    const base = recordedAt.getTime();
+    try {
+      await prisma.segment.createMany({
+        data: deviceSegments.map((s, i) => ({
+          recordingId: recording.id,
+          userId: user.id,
+          seq: i,
+          startOffset: s.startSec,
+          endOffset: s.endSec,
+          startAt: new Date(base + s.startSec * 1000),
+          endAt: new Date(base + s.endSec * 1000),
+          text: s.text,
+        })),
+      });
+      console.log(`[upload] 端末の文字起こしを採用: ${deviceSegments.length}区間 source=${deviceSource}`);
+    } catch (err) {
+      console.error('[upload] Segment の作成に失敗', err);
+    }
+  }
+
+  // 端末の文字起こしが無いときだけ、サーバー側で文字起こしする（fire-and-forget）
+  if (!hasDeviceTranscript) {
+    const baseUrl = req.nextUrl.origin;
+    const authHeader = req.headers.get('authorization') ?? '';
+    fetch(`${baseUrl}/api/recordings/${recording.id}/transcribe`, {
+      method: 'POST',
+      headers: { authorization: authHeader },
+    }).catch(() => {});
+  } else {
+    console.log(`[upload] サーバー側の文字起こしは省略しました id=${recording.id}`);
+  }
 
   return NextResponse.json(recording, { status: 201 });
 }

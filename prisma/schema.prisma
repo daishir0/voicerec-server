@@ -92,6 +92,9 @@ model Recording {
   transcriptionSegments  String?
   transcriptionError     String?
   transcriptionAt        DateTime?
+  /// 文字起こしをどこで作ったか。'whisper'（サーバー）/ 'device-analyzer' / 'device-sf'
+  /// 端末で作った結果を受け取った場合、サーバーでは作り直さない
+  transcriptionSource    String?
   language               String?
   recordedAt             DateTime?
   whisperTranscribedAt   DateTime?
