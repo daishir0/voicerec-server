@@ -1,7 +1,9 @@
 'use client';
 
+
 import { useState, useEffect, useCallback, useRef, DragEvent } from 'react';
 import RecordingDetailPanel from '@/components/RecordingDetailPanel';
+import { fmtDateTime, fmtOffset } from '@/lib/format-time';
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -234,13 +236,8 @@ export default function RecordingsPage() {
     return (bytes / 1048576).toFixed(1) + ' MB';
   };
 
-  const formatDuration = (sec: number) => {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = Math.floor(sec % 60);
-    if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
+  // 長さは「何分の録音か」なので、時刻ではなく経過の形で出す
+  const formatDuration = fmtOffset;
 
   const handleDelete = async (id: string) => {
     setDeletingId(id);
@@ -385,6 +382,7 @@ export default function RecordingsPage() {
             {isAdmin && <th>User</th>}
             <th>Size</th>
             <th>Duration</th>
+            <th>録音時刻</th>
             <th>Status</th>
             <th>Transcription</th>
             <th>Created</th>
@@ -427,7 +425,8 @@ export default function RecordingsPage() {
                 </td>
                 {isAdmin && <td>{r.user?.username ?? '-'}</td>}
                 <td>{formatSize(r.fileSize)}</td>
-                <td>{formatDuration(r.duration)}</td>
+                {/* いつ録ったか。Created（いつ届いたか）とは最大で数時間ずれる */}
+                <td style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(r.recordedAt)}</td>
                 <td>{statusBadge(r.transcriptionStatus)}</td>
                 <td>
                   {r.transcriptionStatus === 'completed' && r.transcriptionText ? (
@@ -448,7 +447,7 @@ export default function RecordingsPage() {
                     <span style={{ color: '#999', fontSize: '0.85em' }}>-</span>
                   )}
                 </td>
-                <td>{new Date(r.createdAt).toLocaleString()}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(r.createdAt)}</td>
                 <td>
                   <button
                     className="btn btn-danger btn-sm"
@@ -467,6 +466,7 @@ export default function RecordingsPage() {
                       audioSrc={`/api/web/recordings/${r.id}`}
                       transcriptionText={r.transcriptionText}
                       segmentsUrl={r.whisperTranscribedAt ? `/api/web/recordings/${r.id}/segments` : null}
+                      recordedAt={r.recordedAt}
                       whisperUnavailableHint={r.whisperError ? `セグメント未処理 (Error: ${r.whisperError})` : 'セグメント未処理'}
                       initialSeekTime={urlSeekTime !== null && expandedId === r.id ? urlSeekTime : undefined}
                     />
@@ -545,7 +545,7 @@ export default function RecordingsPage() {
               <div className="recording-card-meta">
                 <span>{formatSize(r.fileSize)}</span>
                 <span>{formatDuration(r.duration)}</span>
-                <span>{new Date(r.createdAt).toLocaleDateString()}</span>
+                <span>{fmtDateTime(r.recordedAt ?? r.createdAt)}</span>
               </div>
 
               {expandedId === r.id && (
@@ -554,6 +554,7 @@ export default function RecordingsPage() {
                   audioSrc={`/api/web/recordings/${r.id}`}
                   transcriptionText={r.transcriptionStatus === 'completed' ? r.transcriptionText : null}
                   segmentsUrl={r.whisperTranscribedAt ? `/api/web/recordings/${r.id}/segments` : null}
+                  recordedAt={r.recordedAt}
                   whisperUnavailableHint={
                     r.transcriptionStatus !== 'completed'
                       ? '文字起こし処理中または未完了'

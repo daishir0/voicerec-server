@@ -644,7 +644,9 @@ button:disabled {
   font-size: 12px;
   color: #666;
   font-variant-numeric: tabular-nums;
-  min-width: 32px;
+  /* 再生位置は時刻でも出るので「14:02:05」が入る幅を確保する */
+  min-width: 64px;
+  white-space: nowrap;
   text-align: center;
   flex-shrink: 0;
 }
@@ -701,7 +703,7 @@ button:disabled {
 }
 .audio-player-v2 .audio-player-time {
   color: #c4c8d0;
-  min-width: 40px;
+  min-width: 64px;
   font-size: 12px;
 }
 .audio-player-v2 .audio-player-seek-track {
@@ -803,6 +805,33 @@ button:disabled {
   cursor: not-allowed;
 }
 .rec-detail-tabs-spacer { flex: 1; }
+.rec-detail-timemode {
+  display: inline-flex;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+.rec-detail-timemode-btn {
+  padding: 5px 10px;
+  border: none;
+  background: #fff;
+  color: #555;
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.rec-detail-timemode-btn + .rec-detail-timemode-btn {
+  border-left: 1px solid #d1d5db;
+}
+.rec-detail-timemode-btn:hover:not(.active) {
+  background: #eef2ff;
+}
+.rec-detail-timemode-btn.active {
+  background: #4a9eff;
+  color: #fff;
+}
 .rec-detail-search {
   padding: 6px 10px;
   border: 1px solid #d1d5db;
@@ -857,7 +886,9 @@ button:disabled {
   font-variant-numeric: tabular-nums;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
-  min-width: 56px;
+  /* 「14:02:05」が8文字。56px だと秒の途中で折り返す */
+  min-width: 70px;
+  white-space: nowrap;
   flex-shrink: 0;
   padding-top: 2px;
 }
@@ -900,7 +931,7 @@ button:disabled {
     padding: 12px 14px;
     min-height: 48px;
   }
-  .rec-detail-segment-time { font-size: 11px; min-width: 48px; }
+  .rec-detail-segment-time { font-size: 11px; min-width: 62px; }
   .rec-detail-text, .rec-detail-segments { max-height: 50vh; }
 }
 

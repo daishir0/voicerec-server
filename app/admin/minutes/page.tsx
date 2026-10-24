@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { fmtDateTime, fmtOffset } from '@/lib/format-time';
 
 interface Recording {
   id: string;
@@ -53,11 +54,8 @@ export default function MinutesPage() {
     setLoading(false);
   };
 
-  const formatDuration = (sec: number) => {
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
+  // 1時間を超える録音が「83:45」になっていた。共通ヘルパーは時間も出す
+  const formatDuration = fmtOffset;
 
   return (
     <>
@@ -79,7 +77,7 @@ export default function MinutesPage() {
             <tr key={r.id}>
               <td>{r.displayName}</td>
               <td>{r.user.username}</td>
-              <td>{new Date(r.createdAt).toLocaleString()}</td>
+              <td>{fmtDateTime(r.createdAt)}</td>
               <td>{formatDuration(r.duration)}</td>
               <td>
                 <span style={{ color: STATUS_COLOR[r.transcriptionStatus] ?? '#999', fontWeight: 'bold' }}>

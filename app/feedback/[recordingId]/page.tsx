@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import { fmtOffset, fmtSegmentClock } from '@/lib/format-time';
 
 interface Segment {
   text: string;
@@ -36,10 +37,15 @@ interface SegmentFeedback {
   submitted: boolean;
 }
 
-function formatTime(sec: number): string {
-  const m = Math.floor(sec / 60).toString().padStart(2, '0');
-  const s = Math.floor(sec % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
+/**
+ * 発話の位置。録音の開始時刻が分かるなら時刻で出す。
+ * ⚠️ sec は録音の先頭からの秒。足してから時刻にする。
+ */
+function segmentTime(sec: number, recordedAt: string | null): string {
+  if (!recordedAt) return fmtOffset(sec);
+  const base = new Date(recordedAt);
+  if (isNaN(base.getTime())) return fmtOffset(sec);
+  return fmtSegmentClock(new Date(base.getTime() + sec * 1000), base);
 }
 
 function makeAuthHeader(username: string, password: string): string {
@@ -62,6 +68,8 @@ export default function FeedbackPage() {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [selectedDomain, setSelectedDomain] = useState('');
   const [recordingName, setRecordingName] = useState('');
+  // 録音の開始時刻。時刻表示の基準
+  const [recordedAt, setRecordedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -90,6 +98,7 @@ export default function FeedbackPage() {
       const rec = recs.find((r: { id: string; displayName?: string }) => r.id === recordingId);
       if (!rec) throw new Error('録音が見つかりません');
       setRecordingName(rec.displayName || rec.originalName || recordingId);
+      setRecordedAt(rec.recordedAt ?? null);
 
       if (rec.transcriptionSegments) {
         setSegments(JSON.parse(rec.transcriptionSegments));
@@ -320,7 +329,7 @@ export default function FeedbackPage() {
               <span style={styles.segmentIndex}>セグメント {result.segmentIndex + 1}</span>
               {seg && (
                 <span style={styles.timeRange}>
-                  {formatTime(seg.start)} - {formatTime(seg.end)}
+                  {segmentTime(seg.start, recordedAt)} - {segmentTime(seg.end, recordedAt)}
                 </span>
               )}
               {fb.submitted && <span style={styles.badge}>送信済み</span>}
@@ -499,6 +508,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   timeRange: {
     fontSize: 12,
+    whiteSpace: 'nowrap' as const,
     color: '#888',
     background: '#f0f0f0',
     padding: '2px 6px',

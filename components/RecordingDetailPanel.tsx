@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AudioPlayer, { AudioPlayerHandle } from './AudioPlayer';
+import { fmtOffset, fmtSegmentClock } from '@/lib/format-time';
 
 export interface WhisperSegment {
   seq: number;
@@ -24,18 +25,15 @@ export interface RecordingDetailPanelProps {
   whisperUnavailableHint?: string;
   /** URL パラメーター ?t= から渡される初期シーク位置（秒）。マウント時に自動シーク */
   initialSeekTime?: number;
+  /** 録音の開始時刻。時刻表示の基準。無い録音は経過表示のみになる */
+  recordedAt?: string | null;
 }
 
 type Tab = 'segments' | 'text';
+/** 発話の位置を「何時何分」で出すか、「録音の先頭から何秒目」で出すか */
+type TimeMode = 'clock' | 'offset';
 
-function fmtOffset(sec: number): string {
-  if (!isFinite(sec) || sec < 0) sec = 0;
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = Math.floor(sec % 60);
-  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
+const TIME_MODE_KEY = 'vrec:timeMode';
 
 /** ソート済みセグメントから現在再生位置を含む index を二分探索 */
 function findActiveIndex(segments: WhisperSegment[], t: number): number {
@@ -82,11 +80,14 @@ export default function RecordingDetailPanel({
   audioSrc,
   transcriptionText,
   segmentsUrl,
+  recordedAt,
   whisperUnavailableHint,
   initialSeekTime,
 }: RecordingDetailPanelProps) {
   const playerRef = useRef<AudioPlayerHandle | null>(null);
   const [tab, setTab] = useState<Tab>(segmentsUrl ? 'segments' : 'text');
+  // 既定は時刻。選択は端末に覚えさせる（録音ごとに選び直させない）
+  const [timeMode, setTimeMode] = useState<TimeMode>('clock');
   const [segments, setSegments] = useState<WhisperSegment[] | null>(null);
   const [segmentsError, setSegmentsError] = useState<string | null>(null);
   const [activeIdx, setActiveIdx] = useState<number>(-1);
@@ -100,6 +101,36 @@ export default function RecordingDetailPanel({
     playerRef.current?.seek(initialSeekTime, false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(TIME_MODE_KEY);
+      if (saved === 'offset' || saved === 'clock') setTimeMode(saved);
+    } catch {
+      // プライベートウィンドウなどで読めないことがある。既定のままでよい
+    }
+  }, []);
+
+  const changeTimeMode = useCallback((mode: TimeMode) => {
+    setTimeMode(mode);
+    try {
+      localStorage.setItem(TIME_MODE_KEY, mode);
+    } catch {
+      // 保存できなくても表示は動く
+    }
+  }, []);
+
+  /**
+   * 行頭に出す文字。時刻を選んでいても、その録音に開始時刻が無ければ経過で出す。
+   * 時刻が分からないのに、それらしい数字を出すほうが害になる。
+   */
+  const canShowClock = !!recordedAt;
+  const fmtSegmentTime = useCallback((s: WhisperSegment): string => {
+    if (timeMode === 'clock' && canShowClock && s.startAt) {
+      return fmtSegmentClock(s.startAt, recordedAt!);
+    }
+    return fmtOffset(s.startOffset);
+  }, [timeMode, canShowClock, recordedAt]);
 
   // セグメント遅延読み込み (タブ切替 / segmentsUrl 変化時)
   useEffect(() => {
@@ -165,6 +196,8 @@ export default function RecordingDetailPanel({
           src={audioSrc}
           recordingId={recordingId}
           onTimeUpdate={handleTimeUpdate}
+          recordedAt={recordedAt}
+          timeMode={timeMode}
         />
       </div>
 
@@ -187,6 +220,27 @@ export default function RecordingDetailPanel({
           全文
         </button>
         <div className="rec-detail-tabs-spacer" />
+        {/* 時刻 ⇄ 経過。開始時刻が分かる録音でだけ選べる */}
+        {tab === 'segments' && segmentsUrl && canShowClock && (
+          <div className="rec-detail-timemode" role="group" aria-label="時間の表示">
+            <button
+              type="button"
+              className={`rec-detail-timemode-btn ${timeMode === 'clock' ? 'active' : ''}`}
+              onClick={() => changeTimeMode('clock')}
+              title="話された時刻で表示"
+            >
+              時刻
+            </button>
+            <button
+              type="button"
+              className={`rec-detail-timemode-btn ${timeMode === 'offset' ? 'active' : ''}`}
+              onClick={() => changeTimeMode('offset')}
+              title="録音の先頭からの経過で表示"
+            >
+              経過
+            </button>
+          </div>
+        )}
         {tab === 'segments' && segmentsUrl && (
           <input
             className="rec-detail-search"
@@ -243,7 +297,7 @@ export default function RecordingDetailPanel({
                     }}
                   >
                     <span className="rec-detail-segment-time">
-                      {fmtOffset(s.startOffset)}
+                      {fmtSegmentTime(s)}
                     </span>
                     <span className="rec-detail-segment-text">
                       {highlightText(s.text, search)}

@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { fmtOffset, fmtSegmentClock } from '@/lib/format-time';
 
 export interface AudioPlayerHandle {
   /** 指定秒へシーク。play=true なら自動再生開始 */
@@ -23,22 +24,19 @@ export interface AudioPlayerProps {
   recordingId?: string;
   /** 再生位置が変わるたびに通知 (timeupdate) */
   onTimeUpdate?: (sec: number) => void;
+  /** 録音の開始時刻。これがあると再生位置を時刻で出せる */
+  recordedAt?: string | null;
+  /** 'clock' なら再生位置を時刻で出す。右側の「長さ」は長さのまま */
+  timeMode?: 'clock' | 'offset';
 }
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 const SKIP_SECONDS = 10;
 
-function fmt(sec: number): string {
-  if (!isFinite(sec) || sec < 0) sec = 0;
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = Math.floor(sec % 60);
-  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
+const fmt = fmtOffset;
 
 const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function AudioPlayer(
-  { src, recordingId, onTimeUpdate },
+  { src, recordingId, onTimeUpdate, recordedAt, timeMode = 'offset' },
   ref
 ) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -264,6 +262,20 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function Aud
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
+  /**
+   * 再生位置の表示。時刻を選んでいて開始時刻が分かるときだけ時刻にする。
+   * ⚠️ 右端の「長さ」には使わない。長さは時刻にしようがない。
+   */
+  const fmtPosition = useCallback((sec: number): string => {
+    if (timeMode === 'clock' && recordedAt) {
+      const base = new Date(recordedAt);
+      if (!isNaN(base.getTime())) {
+        return fmtSegmentClock(new Date(base.getTime() + sec * 1000), base);
+      }
+    }
+    return fmt(sec);
+  }, [timeMode, recordedAt]);
+
   return (
     <div
       ref={containerRef}
@@ -297,7 +309,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function Aud
       >
         ⏩
       </button>
-      <span className="audio-player-time">{fmt(currentTime)}</span>
+      <span className="audio-player-time">{fmtPosition(currentTime)}</span>
       <div className="audio-player-seek-wrapper">
         <div className="audio-player-seek-track">
           <div className="audio-player-seek-fill" style={{ width: `${progress}%` }} />
@@ -323,7 +335,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function Aud
             className="audio-player-seek-tooltip"
             style={{ left: `${hoverX}px` }}
           >
-            {fmt(hoverTime)}
+            {fmtPosition(hoverTime)}
           </div>
         )}
       </div>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { fmtDateTime, fmtOffset, fmtSegmentClock } from '@/lib/format-time';
 
 interface Segment {
   start: number;
@@ -14,6 +15,7 @@ interface RecordingDetail {
   displayName: string;
   filename: string;
   createdAt: string;
+  recordedAt: string | null;
   duration: number;
   mimeType: string;
   transcriptionStatus: string;
@@ -25,10 +27,18 @@ interface RecordingDetail {
   user: { username: string };
 }
 
-function formatTime(sec: number): string {
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
+/** 長さ（何分の録音か）。時刻にはできない */
+const formatTime = fmtOffset;
+
+/**
+ * 発話の位置。録音の開始時刻が分かるなら時刻で出す。
+ * ⚠️ seg.start は録音の先頭からの秒。足してから時刻にする。
+ */
+function segmentTime(startSec: number, recordedAt: string | null): string {
+  if (!recordedAt) return fmtOffset(startSec);
+  const base = new Date(recordedAt);
+  if (isNaN(base.getTime())) return fmtOffset(startSec);
+  return fmtSegmentClock(new Date(base.getTime() + startSec * 1000), base);
 }
 
 export default function MinutesDetailPage() {
@@ -113,7 +123,7 @@ export default function MinutesDetailPage() {
             </tr>
             <tr>
               <td style={{ padding: '4px 12px 4px 0', fontWeight: 'bold', color: '#555' }}>録音日時</td>
-              <td style={{ padding: '4px 0' }}>{new Date(recording.createdAt).toLocaleString()}</td>
+              <td style={{ padding: '4px 0' }}>{fmtDateTime(recording.createdAt)}</td>
             </tr>
             <tr>
               <td style={{ padding: '4px 12px 4px 0', fontWeight: 'bold', color: '#555' }}>長さ</td>
@@ -122,7 +132,7 @@ export default function MinutesDetailPage() {
             {recording.transcriptionAt && (
               <tr>
                 <td style={{ padding: '4px 12px 4px 0', fontWeight: 'bold', color: '#555' }}>文字起こし日時</td>
-                <td style={{ padding: '4px 0' }}>{new Date(recording.transcriptionAt).toLocaleString()}</td>
+                <td style={{ padding: '4px 0' }}>{fmtDateTime(recording.transcriptionAt)}</td>
               </tr>
             )}
             {recording.language && (
@@ -193,8 +203,8 @@ export default function MinutesDetailPage() {
                       background: i % 2 === 0 ? '#fafafa' : '#fff',
                     }}
                   >
-                    <span style={{ color: '#007bff', minWidth: '80px', fontFamily: 'monospace', fontSize: '0.9em' }}>
-                      {formatTime(seg.start)}
+                    <span style={{ color: '#007bff', minWidth: '90px', whiteSpace: 'nowrap', fontFamily: 'monospace', fontSize: '0.9em' }}>
+                      {segmentTime(seg.start, recording.recordedAt)}
                     </span>
                     <span style={{ lineHeight: '1.6' }}>{seg.text}</span>
                   </div>
