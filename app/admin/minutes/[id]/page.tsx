@@ -51,12 +51,12 @@ export default function MinutesDetailPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const fetchRecording = useCallback(async () => {
-    // 単一録音だけ取れれば良いため limit=1 + cursor で省コスト化したいが、
-    // 既存実装互換のため一覧から検索（上限 200）。
-    const res = await fetch('/api/web/recordings?limit=200');
+    // この1件だけを、本文と区間つきで取る（detail=1）。
+    // 以前は 200件の一覧を落としてから探しており、本文と区間 JSON で数MBになっていた。
+    const res = await fetch(`/api/web/recordings?id=${encodeURIComponent(id)}&limit=1&detail=1`);
     if (!res.ok) return;
     const data = (await res.json()) as { items: RecordingDetail[] };
-    const found = data.items.find((r) => r.id === id);
+    const found = data.items[0];
     if (!found) return;
     setRecording(found);
     if (found.transcriptionSegments) {

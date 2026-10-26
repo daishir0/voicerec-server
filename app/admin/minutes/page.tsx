@@ -11,7 +11,8 @@ interface Recording {
   createdAt: string;
   duration: number;
   transcriptionStatus: string;
-  transcriptionText: string | null;
+  /** 本文は一覧に流さない。長さだけ受け取る */
+  transcriptionTextLength: number;
   user: { username: string };
 }
 
@@ -84,7 +85,7 @@ export default function MinutesPage() {
                   {STATUS_LABEL[r.transcriptionStatus] ?? r.transcriptionStatus}
                 </span>
               </td>
-              <td>{r.transcriptionText ? r.transcriptionText.length + '文字' : '-'}</td>
+              <td>{r.transcriptionTextLength ? r.transcriptionTextLength + '文字' : '-'}</td>
               <td>
                 {r.transcriptionStatus === 'completed' ? (
                   <Link href={`/admin/minutes/${r.id}`} className="btn btn-primary btn-sm">閲覧</Link>

@@ -17,7 +17,8 @@ interface Recording {
   duration: number;
   mimeType: string;
   transcriptionStatus: string;
-  transcriptionText: string | null;
+  /** 本文は一覧に流さない（行を開いたときに取りに行く）。有無の判定用に長さだけ受け取る */
+  transcriptionTextLength: number;
   createdAt: string;
   recordedAt: string | null;
   whisperTranscribedAt: string | null;
@@ -50,9 +51,32 @@ export default function RecordingsPage() {
 
   // 統合パネル: 1度に1録音だけ展開
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  /**
+   * 全文は一覧では落とさず、行を開いたときに1件だけ取りに行く。
+   * 50件ぶん先読みすると、開かないものまで含めて約2MBになるため。
+   * undefined=まだ取っていない / null=取ったが本文なし
+   */
+  const [texts, setTexts] = useState<Record<string, string | null>>({});
+  const loadText = useCallback(async (id: string) => {
+    if (id in texts) return;
+    try {
+      const res = await fetch(`/api/web/recordings?id=${encodeURIComponent(id)}&limit=1&detail=1`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { items: { transcriptionText: string | null }[] };
+      setTexts((prev) => ({ ...prev, [id]: data.items[0]?.transcriptionText ?? null }));
+    } catch {
+      // 取れなくても一覧と再生は動く。全文タブだけが空になる
+    }
+  }, [texts]);
+
   const toggleExpanded = useCallback((id: string) => {
-    setExpandedId((prev) => (prev === id ? null : id));
-  }, []);
+    setExpandedId((prev) => {
+      if (prev === id) return null;
+      void loadText(id);
+      return id;
+    });
+  }, [loadText]);
 
   // URL ?r=recordingId &t=秒 による直接リンク対応
   const [urlSeekTime, setUrlSeekTime] = useState<number | null>(null);
@@ -85,6 +109,7 @@ export default function RecordingsPage() {
     const t = sp.get('t');
     if (r) {
       setExpandedId(r);
+      void loadText(r);
       if (t) {
         const tNum = parseFloat(t);
         if (isFinite(tNum) && tNum >= 0) setUrlSeekTime(tNum);
@@ -429,7 +454,7 @@ export default function RecordingsPage() {
                 <td style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(r.recordedAt)}</td>
                 <td>{statusBadge(r.transcriptionStatus)}</td>
                 <td>
-                  {r.transcriptionStatus === 'completed' && r.transcriptionText ? (
+                  {r.transcriptionStatus === 'completed' && r.transcriptionTextLength > 0 ? (
                     <span
                       title={r.whisperTranscribedAt ? 'セグメント生成済み' : (r.whisperError ?? 'セグメント未処理')}
                       style={{
@@ -464,7 +489,7 @@ export default function RecordingsPage() {
                     <RecordingDetailPanel
                       recordingId={r.id}
                       audioSrc={`/api/web/recordings/${r.id}`}
-                      transcriptionText={r.transcriptionText}
+                      transcriptionText={texts[r.id] ?? null}
                       segmentsUrl={r.whisperTranscribedAt ? `/api/web/recordings/${r.id}/segments` : null}
                       recordedAt={r.recordedAt}
                       whisperUnavailableHint={r.whisperError ? `セグメント未処理 (Error: ${r.whisperError})` : 'セグメント未処理'}
@@ -552,7 +577,7 @@ export default function RecordingsPage() {
                 <RecordingDetailPanel
                   recordingId={r.id}
                   audioSrc={`/api/web/recordings/${r.id}`}
-                  transcriptionText={r.transcriptionStatus === 'completed' ? r.transcriptionText : null}
+                  transcriptionText={r.transcriptionStatus === 'completed' ? (texts[r.id] ?? null) : null}
                   segmentsUrl={r.whisperTranscribedAt ? `/api/web/recordings/${r.id}/segments` : null}
                   recordedAt={r.recordedAt}
                   whisperUnavailableHint={
